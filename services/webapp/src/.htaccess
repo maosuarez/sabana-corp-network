@@ -1,0 +1,8 @@
+RewriteEngine On
+
+# URLs limpias: /profile, /login, /api/internal/admin/database, etc. se resuelven al .php
+# correspondiente. Esto es lo que permite que las rutas del brief (p. ej. /profile?id=12) funcionen
+# sin extension visible.
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^([^.]+)$ $1.php [L,QSA]
