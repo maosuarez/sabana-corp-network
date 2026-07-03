@@ -1,0 +1,12 @@
+SABANA CORP - SOLICITUD DE ACCESO VPN
+
+Empleado: Juan Perez (jperez)
+Departamento: Ventas
+Motivo: Trabajo remoto
+
+Estado: Aprobado por Soporte TI.
+
+--
+Este archivo es un adjunto de ejemplo del sistema de tickets. No contiene
+informacion sensible: sirve para probar la funcionalidad de adjuntos antes
+de explotar el path traversal de attachment.php (Reto 1, vulnerabilidad #4).

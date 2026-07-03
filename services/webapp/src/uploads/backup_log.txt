@@ -1,0 +1,9 @@
+[backup] 2024-01-05 02:00:01 - iniciando backup semanal
+[backup] 2024-01-05 02:03:44 - helpdesk_db volcado correctamente (12.4 MB)
+[backup] 2024-01-05 02:03:47 - subiendo a almacenamiento externo
+[backup] 2024-01-05 02:04:12 - backup completado sin errores
+
+--
+Adjunto de ejemplo del sistema de tickets. Como vpn_request.pdf, no es sensible
+por si mismo: la vulnerabilidad esta en como attachment.php resuelve el
+parametro "file", no en el contenido de estos archivos.

@@ -42,15 +42,11 @@ docker compose up --build
 - Orquestación Docker Compose
 - CI/CD básico (GitHub Actions matrix para webapp + database)
 
-**Pendiente (no comenzado — no incluir en este commit):**
+**Pendiente:**
 - Reto 3 — Linux Server (escalamiento de privilegios local)
 - Contenedor xss-bot (soporte para explotar Stored XSS)
 - Diagrama de red (docs/infra.jpg)
 - Migración a `macvlan` para networking final
-
-**Gaps conocidos en Reto 1:**
-- Endpoint `/api/internal/admin/database` (paso 5b, JWT bypass): lógica documentada en `services/webapp/src/profile.php`, pero fichero `services/webapp/src/api/internal/admin/database.php` aún no existe
-- Directorio `services/webapp/src/uploads/`: referencias en código, pero archivos sample no presentes
 
 ## Documentación
 
