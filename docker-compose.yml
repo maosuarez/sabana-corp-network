@@ -8,6 +8,10 @@ services:
       DB_APP_PASSWORD: ${DB_APP_PASSWORD}
       FLAG_DATABASE: ${FLAG_DATABASE}
       PIVOT_SSH_PASSWORD: ${PIVOT_SSH_PASSWORD}
+    # Publicado a propósito: el participante debe poder conectarse directamente a MariaDB una vez
+    # filtra las credenciales en el Reto 1 (ver docs/context.md, "Arquitectura general").
+    ports:
+      - "3306:3306"
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s

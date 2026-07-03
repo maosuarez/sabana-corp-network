@@ -1,6 +1,6 @@
 # Sabana Corp Network — CTF Lab
 
-Laboratorio de ciberseguridad (CTF) para la Semana de Ingeniería 2025 — Universidad de La Sabana. Una cadena de explotación controlada y documentada que lleva a los participantes desde una aplicación web vulnerable hasta escalamiento de privilegios en Linux.
+Laboratorio de ciberseguridad (CTF) para la Semana de Ingeniería — Universidad de La Sabana. Una cadena de explotación controlada y documentada que lleva a los participantes desde una aplicación web vulnerable hasta escalamiento de privilegios en Linux.
 
 ## Arranque rápido
 
@@ -14,7 +14,8 @@ cp .env.example .env
 # 3. Levantar laboratorio local
 docker compose up --build
 # Webapp: http://localhost:8080
-# Base de Datos (puerto 3306): conexión interna, expuesta para exploración del participante
+# Base de Datos: publicada en localhost:3306 (el participante se conecta directo tras filtrar las
+# credenciales en el Reto 1 — ver docs/context.md)
 ```
 
 ## Estructura del repositorio
@@ -28,7 +29,7 @@ docker compose up --build
 │   ├── database/           # Reto 2: MariaDB con hashes débiles/sin salt
 │   └── (linux-server, xss-bot: no comenzados aún)
 ├── docker-compose.yml      # Orquestación local
-├── .env.example            # Plantilla con names de variables (valores ficticios)
+├── .env.example            # Plantilla con nombres de variables (valores ficticios)
 └── .github/workflows/      # CI/CD: build automático a Docker Hub en push
 ```
 
