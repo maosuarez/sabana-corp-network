@@ -1,0 +1,89 @@
+-- Reto 2 (Base de Datos) — esquema y datos semilla del helpdesk de Sabana Corp.
+-- Se ejecuta contra la base de datos definida por MYSQL_DATABASE (ver docker-compose.yml).
+-- Este archivo es una PLANTILLA: entrypoint-wrapper.sh sustituye las variables ${...} en runtime.
+
+-- Cuenta de aplicación que usa la Web App para conectarse (ver services/webapp/src/config.php). Son
+-- estas mismas credenciales las que se filtran a través de /api/internal/admin/database tras el bypass
+-- de JWT (Reto 1, vulnerabilidad #5b), y las que el participante usa para conectarse directamente a
+-- MariaDB y volcar la tabla `users` (Reto 2).
+CREATE USER IF NOT EXISTS '${DB_APP_USER}'@'%' IDENTIFIED BY '${DB_APP_PASSWORD}';
+GRANT ALL PRIVILEGES ON *.* TO '${DB_APP_USER}'@'%';
+FLUSH PRIVILEGES;
+
+CREATE TABLE IF NOT EXISTS users (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    username      VARCHAR(64) NOT NULL UNIQUE,
+    -- VULN: contraseñas de usuarios almacenadas como MD5 sin salt (Reto 2). Intencionalmente
+    -- crackeable con hashcat/rainbow tables — esta es la vulnerabilidad del reto, no un descuido.
+    password_md5  CHAR(32) NOT NULL,
+    role          ENUM('employee', 'it', 'admin') NOT NULL DEFAULT 'employee',
+    full_name     VARCHAR(128) NOT NULL,
+    email         VARCHAR(128) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tickets (
+    id                    INT AUTO_INCREMENT PRIMARY KEY,
+    subject               VARCHAR(255) NOT NULL,
+    description           TEXT NOT NULL,
+    attachment_filename   VARCHAR(255) DEFAULT NULL,
+    created_by            INT NOT NULL,
+    assigned_to           INT DEFAULT NULL,
+    status                ENUM('open', 'in_progress', 'closed') NOT NULL DEFAULT 'open',
+    FOREIGN KEY (created_by) REFERENCES users(id),
+    FOREIGN KEY (assigned_to) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS comments (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    ticket_id   INT NOT NULL,
+    author      VARCHAR(64) NOT NULL,
+    body        TEXT NOT NULL,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (ticket_id) REFERENCES tickets(id)
+);
+
+-- Reto 2: nota interna que entrega la flag de puntuación una vez el participante alcanza acceso de
+-- lectura a la base de datos con las credenciales filtradas por el Reto 1 (endpoint interno + bypass
+-- de JWT). No es un hash a crackear: sería inviable crackear por diccionario un valor de flag aleatorio.
+CREATE TABLE IF NOT EXISTS system_notes (
+    id       INT AUTO_INCREMENT PRIMARY KEY,
+    content  TEXT NOT NULL
+);
+
+INSERT INTO system_notes (content) VALUES
+    ('Recordatorio de mantenimiento: rotar credenciales de la cuenta de aplicacion del helpdesk. -- IT'),
+    ('${FLAG_DATABASE}');
+
+-- Usuarios semilla. Los passwords en texto plano de este comentario son intencionalmente débiles y
+-- forman parte del reto (ver CLAUDE.md — excepción documentada a "secretos fuera de git").
+INSERT INTO users (username, password_md5, role, full_name, email) VALUES
+    -- admin: cuenta de administracion real de la app. Password fuerte, no forma parte de la cadena de
+    -- explotacion prevista (el reto de XSS usa una credencial de bot separada, ver services/xss-bot).
+    ('admin', MD5('C0rp4dm1n!SuperSecure#2024'), 'admin', 'Administrador Sabana Corp', 'admin@sabanacorp.lab'),
+
+    -- jperez: credencial de Empleado filtrada en el HTML/JS del login (Reto 1, vulnerabilidad #1).
+    ('jperez', MD5('Bienvenido123'), 'employee', 'Juan Perez', 'jperez@sabanacorp.lab'),
+
+    -- it_soporte: usuario de TI cuyo ID se descubre via SQLi (Reto 1, vulnerabilidad #2) y cuyo perfil
+    -- se accede via IDOR (Reto 1, vulnerabilidad #3).
+    ('it_soporte', MD5('SoporteIT2024!'), 'it', 'Soporte TI', 'it.soporte@sabanacorp.lab'),
+
+    -- msilva: password reuse deliberado — su contraseña de la app es la MISMA que su contraseña SSH en
+    -- el Linux Server del Reto 3 (PIVOT_SSH_PASSWORD). Este es el secreto de progresion que conecta el
+    -- Reto 2 con el Reto 3.
+    ('msilva', MD5('${PIVOT_SSH_PASSWORD}'), 'employee', 'Maria Silva', 'msilva@sabanacorp.lab'),
+
+    -- Empleados de "ruido" adicionales, sin rol en la cadena de explotacion.
+    ('rgomez', MD5('Password1'), 'employee', 'Ricardo Gomez', 'rgomez@sabanacorp.lab'),
+    ('lcastro', MD5('sabana2024'), 'employee', 'Laura Castro', 'lcastro@sabanacorp.lab');
+
+INSERT INTO tickets (subject, description, attachment_filename, created_by, assigned_to, status) VALUES
+    ('No puedo acceder a mi correo', 'Desde ayer no puedo iniciar sesion en el correo corporativo.', NULL, 2, NULL, 'open'),
+    ('Solicitud de acceso a VPN', 'Necesito acceso remoto para trabajar desde casa.', 'vpn_request.pdf', 2, 3, 'in_progress'),
+    -- Ticket asignado a IT con informacion sensible — este es el que el participante encuentra via SQLi.
+    ('Revisar credenciales de base de datos del helpdesk', 'Pendiente rotar el usuario de aplicacion tras la migracion. Contactar a it_soporte (id de usuario incluido en asignacion).', NULL, 1, 3, 'in_progress'),
+    ('Backup semanal del servidor', 'Confirmar que el cron de backup en el servidor Linux sigue corriendo.', 'backup_log.txt', 3, 3, 'closed');
+
+INSERT INTO comments (ticket_id, author, body) VALUES
+    (1, 'admin', 'Estamos revisando tu caso, te contactaremos pronto.'),
+    (2, 'it_soporte', 'Aprobado, se configurara el acceso esta semana.');
