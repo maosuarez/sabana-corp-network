@@ -1,0 +1,48 @@
+services:
+  database:
+    build: ./services/database
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      DB_APP_USER: ${DB_APP_USER}
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD}
+      FLAG_DATABASE: ${FLAG_DATABASE}
+      PIVOT_SSH_PASSWORD: ${PIVOT_SSH_PASSWORD}
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - sabana-lab
+
+  webapp:
+    build: ./services/webapp
+    environment:
+      DB_HOST: database
+      DB_NAME: ${MYSQL_DATABASE}
+      DB_APP_USER: ${DB_APP_USER}
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD}
+      JWT_SIGNING_SECRET: ${JWT_SIGNING_SECRET}
+      BOT_SECRET: ${BOT_SECRET}
+      FLAG_WEBAPP_XSS: ${FLAG_WEBAPP_XSS}
+      FLAG_WEBAPP_LFI: ${FLAG_WEBAPP_LFI}
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    networks:
+      - sabana-lab
+
+  # Pendientes de construir (ver CLAUDE.md / docs/context.md):
+  #   - linux-server: reto 3, se añade cuando exista services/linux-server/Dockerfile.
+  #   - xss-bot: servicio de soporte (no es un reto) que dispara el Stored XSS del reto 1
+  #     autenticándose vía bot_login.php con BOT_SECRET; se añade cuando exista services/xss-bot.
+
+networks:
+  sabana-lab:
+    driver: bridge
+    # La topología final del laboratorio usa macvlan para IP propia por contenedor en la red física del
+    # evento (ver docs/context.md, decisión de diseño #8, pendiente de docs/infra.jpg). Bridge estándar
+    # es suficiente y más simple para desarrollo local.
