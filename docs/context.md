@@ -1,234 +1,170 @@
 # Contexto del laboratorio — Sabana Corp Network
 
-Este documento es la **fuente de verdad** del dominio del proyecto: qué es el laboratorio, por qué
-existe, cómo se resuelve, y por qué cada vulnerabilidad está donde está. Todo cambio de diseño se
-refleja aquí. Las reglas de proceso (convenciones de código, Docker, CI/CD) viven en `CLAUDE.md`; este
-archivo se centra en la narrativa y la arquitectura del laboratorio en sí.
+Este documento es la **fuente de verdad** del dominio del proyecto: qué es el laboratorio, por qué existe, cómo se resuelve, y por qué cada vulnerabilidad está donde está. Todo cambio de diseño se refleja aquí. Las reglas de proceso (convenciones de código, Docker, CI/CD) viven en `CLAUDE.md`; este archivo se centra en la narrativa y la arquitectura del laboratorio en sí.
 
-> Estado: diseño inicial, sin código implementado todavía. Este documento describe el laboratorio tal
-> como se va a construir; a medida que se implemente, debe mantenerse sincronizado con la realidad del
-> código.
+> Estado: implementación completa de los 3 retos y el xss-bot. Pendiente: verificación end-to-end, migración a macvlan, templating por equipo y valor final del Fragmento B.
 
 ## Historia y narrativa
 
-**Sabana Corp** es una empresa ficticia con una mesa de ayuda interna (sistema de tickets) usada por
-empleados para reportar incidentes de TI. El participante entra al laboratorio como un atacante externo
-sin credenciales, con únicamente la URL pública de la aplicación de tickets.
+**Sabana Corp** es una empresa ficticia con una mesa de ayuda interna (sistema de tickets) usada por empleados para reportar incidentes de TI. El participante entra al laboratorio como un atacante externo sin credenciales, con únicamente la URL pública de la aplicación de tickets.
 
 La narrativa sigue la lógica de un compromiso real de infraestructura:
 
 1. El atacante encuentra una debilidad en la aplicación web pública (Sabana Corp Helpdesk).
-2. Usa esa debilidad para escalar privilegios dentro de la propia aplicación hasta llegar a
-   funcionalidad interna reservada al personal de TI.
+2. Usa esa debilidad para escalar privilegios dentro de la propia aplicación hasta llegar a funcionalidad interna reservada al personal de TI.
 3. Esa funcionalidad interna filtra las credenciales de la base de datos que respalda la aplicación.
-4. Dentro de la base de datos, el atacante recupera contraseñas de empleados almacenadas de forma
-   insegura. Una de ellas es la credencial SSH de un usuario de bajo privilegio en el servidor Linux
-   que aloja la infraestructura.
-5. Desde ahí, una cadena clásica de escalamiento de privilegios en Linux (cron mal configurado → sudo
-   sin contraseña vía GTFOBins) lleva al atacante hasta `root`, donde encuentra la evidencia final del
-   compromiso (`secrets.txt`).
+4. Dentro de la base de datos, el atacante recupera contraseñas de empleados almacenadas de forma insegura. Una de ellas es la credencial SSH de un usuario de bajo privilegio en el servidor Linux.
+5. Desde ahí, una cadena clásica de escalamiento de privilegios en Linux (cron mal configurado → SUID → sudo sin contraseña vía GTFOBins) lleva al atacante hasta `root`, donde encuentra la evidencia final del compromiso (`secrets.txt`).
 
-El laboratorio está diseñado para sentirse como **una sola intrusión continua**, no como tres retos
-sueltos. Cada paso debe justificar narrativamente el siguiente.
+El laboratorio está diseñado para sentirse como **una sola intrusión continua**, no como tres retos sueltos. Cada paso justifica narrativamente el siguiente.
 
 ## Objetivos pedagógicos
 
-- Practicar una cadena de explotación web completa: credenciales expuestas → SQLi → IDOR → LFI → JWT
-  inseguro → XSS almacenado.
-- Practicar cracking de hashes de contraseñas sin salt/con algoritmo débil.
-- Practicar enumeración y escalamiento de privilegios en Linux: cron jobs, binarios con permisos
-  especiales, sudo sin contraseña, GTFOBins.
-- Reforzar que cada vulnerabilidad, aislada, puede parecer de bajo impacto, pero encadenada con otras
-  compromete la infraestructura completa — la lección central de "defense in depth".
+- Practicar una cadena de explotación web completa: credenciales expuestas → SQLi → IDOR → LFI → JWT inseguro → XSS almacenado.
+- Practicar cracking de hashes de contraseñas sin salt con algoritmo débil.
+- Practicar enumeración y escalamiento de privilegios en Linux: cron jobs, SUID, sudo sin contraseña, GTFOBins.
+- Reforzar que cada vulnerabilidad aislada puede parecer de bajo impacto, pero encadenada con otras compromete la infraestructura completa — la lección central de "defense in depth".
+
+## Meta-reto: Objetivo Final
+
+Distribuidos en 4 de los retos hay archivos llamados `objetivo_final.txt`, cada uno con una palabra. En el orden de descubrimiento natural de la cadena de explotación, las cuatro palabras forman la frase:
+
+> **"trabaja duro con pasion"**
+
+| Palabra | Reto | Ubicación | Cómo se obtiene |
+|---|---|---|---|
+| `trabaja` | 1.4 — LFI | `/var/www/objetivo_final.txt` | `GET /attachment?file=../../objetivo_final.txt` |
+| `duro` | 1.5 — JWT bypass | Campo JSON en `/api/internal/admin/database` | `objetivo_final` en la respuesta del endpoint interno |
+| `con` | 3.2 — Cron job | `/home/jrodriguez/objetivo_final.txt` | Accesible tras escalar a `jrodriguez` (permisos 640) |
+| `pasion` | 3.5 — Root | `/root/objetivo_final.txt` | Accesible solo como root (permisos 600) |
+
+Los archivos se crean en runtime desde los `entrypoint.sh` de cada servicio (no están commiteados con contenido fijo). Son independientes de las flags `SABANA{...}` — no son flags de puntuación, son parte de un meta-reto narrativo.
 
 ## Arquitectura general
 
-Tres servicios independientes, cada uno en su propio contenedor Docker, conectados por la cadena de
-explotación descrita arriba (no por llamadas de red directas entre ellos — la conexión es de
-**información**, no de tráfico):
+Tres servicios independientes, cada uno en su propio contenedor Docker, conectados por la cadena de explotación (la conexión es de **información**, no de tráfico de red entre contenedores):
 
 ```
-┌─────────────────────┐        ┌─────────────────────┐        ┌─────────────────────┐
-│   Web Application    │        │     Base de Datos     │        │     Linux Server      │
-│  (PHP + MariaDB)      │──────▶│      (MariaDB)          │──────▶│   (Ubuntu + SSH)       │
-│  Sistema de tickets   │ creds │  Usuarios/contraseñas   │  SSH  │  Escalamiento local   │
-│  Sabana Corp Helpdesk │       │  con hash débil/sin salt │ creds │  hasta root            │
-└─────────────────────┘        └─────────────────────┘        └─────────────────────┘
-     Reto 1 (6 vulns              Reto 2 (cracking de              Reto 3 (enumeración +
-     encadenadas)                  hashes)                          escalamiento de privilegios)
+┌──────────────────────┐       ┌──────────────────────┐       ┌──────────────────────┐
+│   Web Application     │       │    Base de Datos       │       │     Linux Server       │
+│  (PHP + MariaDB)       │──────▶│      (MariaDB)          │──────▶│  (Ubuntu 22.04 + SSH) │
+│  Sistema de tickets    │ creds │  Usuarios con MD5       │  SSH  │  Escalamiento local   │
+│  Sabana Corp Helpdesk  │       │  sin salt               │ creds │  hasta root           │
+└──────────────────────┘       └──────────────────────┘       └──────────────────────┘
+      Reto 1 (6 vulns)               Reto 2 (hashes)               Reto 3 (privesc)
 ```
 
-- La Web Application se conecta en runtime a la Base de Datos (es su backend real), pero el
-  **participante nunca alcanza la base de datos por la red directamente** — llega a sus credenciales a
-  través de un endpoint interno filtrado por la propia aplicación web. Una vez tiene las credenciales,
-  se conecta él mismo a la base de datos expuesta (puerto publicado) para extraer y crackear los hashes.
-- El Linux Server no tiene relación de red con los otros dos servicios; es la máquina donde el
-  participante usa la credencial SSH obtenida en el Reto 2. Puede modelarse como el host que alojaría
-  en la vida real tanto la Web Application como la Base de Datos, aunque en el laboratorio cada uno
-  corre en su propio contenedor por simplicidad de despliegue y aislamiento entre participantes.
-- Red: la propuesta final usa `macvlan` para dar IP propia a cada contenedor dentro de la red física del
-  edificio de la Semana de Ingeniería (diagrama en `docs/infra.jpg`, **pendiente de añadir**). Hasta que
-  ese diagrama exista, se documenta aquí la intención pero no se bloquea el desarrollo de los retos por
-  la topología final de red (ver convención en `CLAUDE.md`).
-- Además de los 3 retos, existe un cuarto contenedor de **soporte** (`services/xss-bot`) que no es un
-  reto ni se puntúa: simula a un usuario administrador visitando tickets en un navegador real para que
-  el Stored XSS del Reto 1 tenga un objetivo real que exfiltrar. Ver decisión de diseño #6 más abajo.
+Existe además un cuarto contenedor de **soporte** (`services/xss-bot`) que no es un reto: simula a un administrador visitando tickets para que el Stored XSS del Reto 1 tenga un objetivo real. Ver decisión de diseño #6.
 
 ## Servicios y vulnerabilidades
 
 ### Reto 1 — Web Application (Sabana Corp Helpdesk)
 
-Sistema de tickets con tres perfiles: **Visitante**, **Empleado**, **Personal de TI**. Stack: PHP +
-MariaDB (ver decisión de stack en `CLAUDE.md`).
+Sistema de tickets con tres perfiles: **Visitante** (sin sesión), **Empleado** (`jperez`), **Personal de TI** (`it_soporte`). Stack: PHP 8.2 + Apache + MariaDB.
 
-La cadena dentro de este único reto tiene 6 pasos, cada uno desbloqueando el siguiente:
-
-| # | Vulnerabilidad | Qué hace el participante | Qué obtiene |
+| # | Vulnerabilidad | Técnica | Entrega |
 |---|---|---|---|
-| 1 | Credenciales expuestas | Inspecciona el código fuente HTML/JS del login | Usuario y contraseña de prueba (nivel Empleado) |
-| 2 | SQL Injection | Explota el buscador de tickets con input no sanitizado | Acceso a tickets asignados a personal de TI, incluido el **ID de un usuario privilegiado** |
-| 3 | IDOR | Cambia el parámetro `id` en `/profile?id=12` | Perfil del usuario de TI; dentro aparecen enlaces internos protegidos |
-| 4 | Descubrimiento de endpoint | Intenta acceder a un enlace interno sin privilegio suficiente | El error revela la ruta real: `/api/internal/admin/database` |
-| 5a | LFI | Explota el parámetro de archivo adjunto de un ticket | Lectura de archivos del servidor (flags/secretos/pistas) |
-| 5b | JWT inseguro | Modifica el claim `role` del JWT (`user` → `it`/`admin`) sin que el backend valide la firma correctamente | Acceso al endpoint `/api/internal/admin/database` descubierto en el paso 4 → **credenciales de la Base de Datos** |
-| 6 | Stored XSS | Inyecta un payload en un comentario de ticket | Exfiltra la cookie de sesión de otro usuario (contiene una flag de este reto) |
+| 1.1 | Credenciales expuestas | Comentario HTML en view-source de `/login` | Sesión como `jperez` (empleado) |
+| 1.2 | SQL Injection | Concatenación directa en `mysqli_query()` en `/search` | ID del usuario `it_soporte` (id=3) |
+| 1.3 | IDOR | `/profile?id=3` sin validar ownership | Ruta del endpoint interno revelada en el 403 |
+| 1.4 | LFI / path traversal | `readfile()` sin sanitizar en `/attachment` | `FLAG_WEBAPP_LFI` + palabra "trabaja" del meta-reto |
+| 1.5 | JWT inseguro | Payload decodificado sin verificar HMAC en `/api/internal/admin/database` | Credenciales de la BD + palabra "duro" del meta-reto |
+| 1.6 | Stored XSS | `echo $body` sin `htmlspecialchars()` en comentarios de tickets | `FLAG_WEBAPP_XSS` (en claim `flag` del JWT del bot) |
 
-Notas de diseño:
-- Los pasos 2→3→4 son estrictamente secuenciales (cada uno depende del anterior). Los pasos 5a (LFI) y
-  5b (JWT) son en gran medida independientes entre sí — ambos parten del contexto ya alcanzado en el
-  paso 4 — pero **5b es el que entrega el secreto que hace avanzar al Reto 2** (credenciales de BD). El
-  LFI (5a) es una vía adicional de obtención de pistas/flags dentro del mismo reto, no un requisito
-  estricto para llegar al Reto 2.
-- El Stored XSS (paso 6) es la flag de puntuación del Reto 1; no es un requisito para avanzar al Reto 2
-  (que depende del paso 5b). Esto evita que un participante quede bloqueado en el reto siguiente por no
-  haber resuelto el XSS.
-- **Decisión pendiente de implementación concreta**: el mecanismo exacto de "JWT inseguro" (alg `none`
-  aceptado, verificación de firma deshabilitada, o secreto débil/hardcodeado) debe fijarse al escribir
-  el código y documentarse aquí como decisión de diseño (ver sección más abajo).
+**Flujo de dependencias:** 1.1 → 1.2 → 1.3 → (1.4 y 1.5 paralelos) → 1.6 independiente.  
+La vulnerabilidad que avanza la cadena al Reto 2 es **1.5** (JWT bypass → credenciales BD).  
+La vulnerabilidad **1.4** (LFI) y **1.6** (XSS) son flags de puntuación adicionales dentro del Reto 1.
 
 ### Reto 2 — Base de Datos
 
-MariaDB con las credenciales obtenidas en el paso 5b del Reto 1. Contiene una tabla de usuarios cuyas
-contraseñas están almacenadas con un algoritmo de hash inseguro.
+MariaDB accesible directamente en el puerto 3306 con las credenciales obtenidas en 1.5. Contiene las contraseñas de los empleados almacenadas como MD5 sin salt.
 
-- **Decisión de diseño**: usar **MD5 sin salt**. Es el ejemplo más reconocible de "almacenamiento de
-  contraseñas inseguro" en material didáctico, es crackeable en segundos con `hashcat`/rainbow tables o
-  incluso búsquedas directas en bases de datos públicas de hashes, y no requiere que el participante
-  tenga hardware potente — mantiene el reto accesible en el contexto de un evento universitario de
-  duración limitada.
-  - Alternativa considerada: SHA-1 sin salt. Descartada por no aportar ninguna diferencia pedagógica
-    frente a MD5 y ser marginalmente más lenta de crackear sin beneficio adicional.
-  - Alternativa considerada: cifrado reversible (no hash). Descartada por ser menos realista — en
-    incidentes reales el error casi siempre es "hash débil", no "contraseña en texto plano o cifrada
-    reversiblemente".
-- **Decisión de diseño**: una de las contraseñas crackeadas es la credencial SSH de un usuario de bajo
-  privilegio del Reto 3 (Linux Server). Esta es la conexión que hace avanzar la cadena.
-  - El resto de contraseñas de la tabla pueden ser "ruido" realista (otros empleados ficticios) o
-    combinarse para formar una flag de puntuación de este reto (p. ej. concatenar 3 contraseñas
-    específicas, identificables por un campo o rol en la tabla). Se recomienda la opción de "ruido +
-    una flag de puntuación separada" antes que "concatenar contraseñas para formar la flag", porque
-    depende del orden exacto de filas y es frágil ante cualquier cambio futuro en el seed de datos.
+- **`users`**: tabla con `password_md5`. Hashes crackeables con hashcat + rockyou en segundos.
+- **`system_notes`**: tabla que contiene `FLAG_DATABASE` en texto claro (inyectada en runtime desde `FLAG_DATABASE`).
+- **Progresión**: la contraseña de `msilva` crackeada = `PIVOT_SSH_PASSWORD` = credencial SSH del Reto 3.
 
 ### Reto 3 — Linux Server
 
-Ubuntu Server en Docker, accesible por SSH con la credencial obtenida en el Reto 2. Progresión de
-escalamiento de privilegios:
+Ubuntu 22.04 accesible por SSH en el puerto 2222. Cadena de escalamiento con 3 escalones:
 
-1. Enumeración inicial del sistema (usuarios, procesos, permisos del usuario actual).
-2. Descubrir que el usuario puede crear o modificar un cron job con permisos limitados.
-3. Usar ese cron para ejecutar código como un segundo usuario y obtener sus privilegios.
-4. Enumerar de nuevo desde la posición del segundo usuario.
-5. Encontrar binarios con permisos especiales (SUID) o configuración interesante.
-6. Detectar una entrada de `sudo` sin contraseña (`NOPASSWD`) para un binario específico.
-7. Usar GTFOBins para ese binario y escalar hasta `root`.
-8. Encontrar `secrets.txt` en un directorio de `root` con la **flag final del laboratorio**.
+```
+msilva (SSH) ──→ jrodriguez (cron hijack) ──→ lcastillo (SUID find) ──→ root (sudo python3)
+```
 
-Este reto es intencionalmente el más "clásico" de escalamiento Linux (equivalente a una máquina
-fácil/media de plataformas tipo HackTheBox), porque su función pedagógica es consolidar, no introducir
-conceptos nuevos — el laboratorio ya gastó su presupuesto de "novedad" en el Reto 1.
+| Escalón | Vector | Herramienta de detección |
+|---|---|---|
+| msilva → jrodriguez | `/opt/scripts/sync.sh` con permisos `777` ejecutado por cron de `jrodriguez` cada minuto | `pspy`, `ls -la /opt/scripts/` |
+| jrodriguez → lcastillo | `/usr/local/bin/find` con SUID de `lcastillo`. GTFOBins: `find . -exec /bin/bash -p \;` | `find / -perm -4000 2>/dev/null` |
+| lcastillo → root | `sudo NOPASSWD: /usr/bin/python3`. GTFOBins: `sudo python3 -c 'import os; os.execl("/bin/sh","sh")'` | `sudo -l` |
 
-## Flujo esperado de resolución (resumen para el participante)
+**Reto paralelo 3.6:** proceso `/usr/local/bin/flag` corriendo como `nobody` con `FLAG_LINUXSERVER_PROC` como argumento de línea de comandos. Visible para todos los usuarios desde el primer nivel (msilva). Descubrimiento: `ps aux | grep flag`.
 
-1. Abrir la Web Application → ver el código fuente del login → obtener credencial de Empleado.
-2. Iniciar sesión como Empleado → usar el buscador de tickets con SQLi → encontrar el ID de un usuario
-   de TI.
-3. Visitar `/profile?id=<ID de TI>` (IDOR) → ver enlaces internos → intentar acceder → la respuesta de
-   error revela `/api/internal/admin/database`.
-4. Modificar el JWT propio para tener `role=it` (o `admin`) → acceder al endpoint interno → obtener
-   credenciales de la Base de Datos.
-5. (Opcional, en paralelo) Explotar el LFI de los adjuntos de tickets para encontrar pistas/flags
-   adicionales del servidor web.
-6. (Opcional, flag de puntuación del Reto 1) Explotar el Stored XSS en comentarios para robar una
-   cookie de sesión con una flag.
-7. Conectarse a la Base de Datos con las credenciales del paso 4 → volcar la tabla de usuarios →
-   crackear los hashes MD5 → identificar la credencial SSH del Reto 3.
-8. Conectarse por SSH al Linux Server → enumerar → escalar vía cron a un segundo usuario → enumerar de
-   nuevo → encontrar sudo `NOPASSWD` sobre un binario → usar GTFOBins → obtener `root` → leer
-   `secrets.txt` → **flag final**.
+Archivos de flags en el Linux Server:
+- `/root/secrets.txt` (600) — `FLAG_LINUXSERVER_ROOT` + placeholder Fragmento B
+- `/root/objetivo_final.txt` (600) — palabra "pasion" del meta-reto
+
+## Flujo esperado de resolución
+
+1. `view-source:/login` → `jperez/Bienvenido123` → sesión de empleado
+2. `/search?q=' OR 1=1 -- -` → UNION SQLi → ID 3 de `it_soporte`
+3. `/profile?id=3` → IDOR → sección IT → click → 403 con ruta del endpoint
+4. `/attachment?file=../../flag_lfi.txt` → `FLAG_WEBAPP_LFI`; `?file=../../objetivo_final.txt` → "trabaja"
+5. Modificar JWT: cambiar `role` a `it`, sin verificar firma → GET `/api/internal/admin/database` → credenciales BD + "duro"
+6. XSS en comentario de ticket → bot visita → exfiltra `document.cookie` → decodificar JWT → `FLAG_WEBAPP_XSS`
+7. `mysql -h localhost -P 3306 -u helpdesk_app -p` → dump `users` + `SELECT content FROM system_notes` → `FLAG_DATABASE`
+8. `hashcat -m 0 hashes.txt rockyou.txt` → crackear MD5 → identificar password de `msilva`
+9. `ssh msilva@<host> -p 2222` → `ps aux | grep flag` → `FLAG_LINUXSERVER_PROC` (reto 3.6)
+10. Cron hijack → `jrodriguez` → `/home/jrodriguez/objetivo_final.txt` → "con"
+11. SUID find → `lcastillo`
+12. `sudo python3` → root → `cat /root/secrets.txt` → `FLAG_LINUXSERVER_ROOT`; `cat /root/objetivo_final.txt` → "pasion"
 
 ## Esquema de flags y secretos
 
-Ver también la sección correspondiente en `CLAUDE.md` (reglas de proceso). Resumen del esquema:
+**Flags de puntuación** (formato `SABANA{...}`, inyectadas por env, nunca commiteadas):
 
-- **Flags de puntuación** (formato `SABANA{...}`, una por reto, entregadas vía variable de entorno,
-  nunca commiteadas):
-  - `FLAG_WEBAPP_XSS` — obtenida robando una cookie de sesión vía el Stored XSS del Reto 1.
-  - `FLAG_WEBAPP_LFI` (opcional) — obtenida leyendo un archivo específico vía el LFI del Reto 1.
-  - `FLAG_DATABASE` — obtenida al crackear un subconjunto específico de hashes en el Reto 2.
-  - `FLAG_LINUXSERVER_ROOT` — la flag final, en `secrets.txt`, tras escalar a `root` en el Reto 3.
-- **Secretos de progresión** (no tienen formato de flag, son necesarios para avanzar, no se puntúan por
-  sí solos):
-  - Credencial de Empleado (del comentario HTML/JS del login).
-  - ID del usuario de TI (de la SQLi).
-  - Ruta del endpoint interno (`/api/internal/admin/database`, revelada por el error de IDOR).
-  - Credenciales de la Base de Datos (del endpoint interno tras el bypass de JWT).
-  - Credencial SSH del Reto 3 (de un hash crackeado en el Reto 2).
+| Variable | Cómo se obtiene |
+|---|---|
+| `FLAG_WEBAPP_LFI` | LFI: `GET /attachment?file=../../flag_lfi.txt` |
+| `FLAG_WEBAPP_XSS` | Stored XSS: claim `flag` en el JWT de la cookie del bot |
+| `FLAG_DATABASE` | BD: `SELECT content FROM system_notes` |
+| `FLAG_LINUXSERVER_ROOT` | Linux root: `cat /root/secrets.txt` |
+| `FLAG_LINUXSERVER_PROC` | Linux proceso: `ps aux \| grep flag` |
+
+**Secretos de progresión** (no son flags, son necesarios para avanzar):
+
+| Secreto | Cómo se obtiene | Para qué sirve |
+|---|---|---|
+| Credencial de `jperez` | View-source del login | Iniciar sesión en la webapp |
+| ID de `it_soporte` (=3) | SQLi en `/search` | IDOR en `/profile?id=3` |
+| Ruta `/api/internal/admin/database` | Error 403 tras IDOR | Objetivo del JWT bypass |
+| `DB_APP_USER` + `DB_APP_PASSWORD` | JWT bypass del endpoint interno | Conectar a la BD (Reto 2) |
+| `PIVOT_SSH_PASSWORD` | Crackear hash MD5 de `msilva` en la BD | SSH al servidor Linux (Reto 3) |
 
 ## Decisiones de diseño (registro)
 
-Esta sección acumula decisiones arquitectónicas no triviales, con alternativas consideradas. Añadir una
-entrada nueva cada vez que se tome una decisión de este tipo — no sobreescribir entradas anteriores.
+Esta sección acumula decisiones arquitectónicas no triviales con alternativas consideradas.
 
-1. **Alcance de servicios**: el laboratorio tiene 3 servicios/retos (Web App, Base de Datos, Linux
-   Server). Se descartó un cuarto servicio de tipo "cPanel" que estaba en una versión anterior del
-   brief — decisión del propietario del proyecto, sin alternativas técnicas evaluadas.
-2. **Stack de la Web Application**: PHP + MariaDB (ver justificación en `CLAUDE.md`, sección "Stack
-   técnico").
-3. **Algoritmo de hash en la Base de Datos**: MD5 sin salt (ver justificación en la sección del Reto 2
-   arriba).
-4. **Manejo de flags y secretos de progresión**: fuera de git, vía variables de entorno / secretos de
-   despliegue; `.env.example` versionado solo con nombres de variable y valores ficticios. Esta regla se
-   extiende también a secretos de progresión que sean específicos de un despliegue concreto (p. ej.
-   `PIVOT_SSH_PASSWORD`, `BOT_SECRET`) — no solo a las flags `SABANA{...}` — para que el mismo repositorio
-   pueda reutilizarse en futuras ediciones del evento sin arrastrar los secretos de la edición anterior.
-   Las contraseñas MD5 "de ruido" de empleados en el Reto 2 son la única excepción: son intencionalmente
-   débiles y crackeables por diseño, así que sí viven como seed data en el repositorio (no son secretos,
-   son la vulnerabilidad en sí misma).
-5. **Mecanismo del JWT inseguro**: verificación de firma deshabilitada en el backend (el servidor decodifica
-   el payload del JWT pero nunca recalcula/compara el HMAC contra la firma recibida). Se eligió sobre
-   `alg: none` porque no depende de que la librería cliente permita construir un token con ese algoritmo,
-   y es el caso más común y realista de "JWT inseguro" en aplicaciones reales.
-6. **Servicio de soporte "xss-bot"**: se añade un cuarto contenedor, `services/xss-bot`, que **no es un
-   reto nuevo** sino infraestructura necesaria para que el Stored XSS del Reto 1 sea explotable de forma
-   realista. Es un script Node + Puppeteer (Chromium real) que se autentica contra un endpoint interno
-   (`bot_login.php`, protegido por el secreto `BOT_SECRET`, no por contraseña de usuario) y visita
-   periódicamente las páginas de tickets, ejecutando en un navegador real cualquier payload almacenado.
-   La cookie de sesión que obtiene el bot lleva un claim `flag` con `FLAG_WEBAPP_XSS` dentro del JWT, y la
-   cookie se emite sin `HttpOnly` (vulnerabilidad deliberada) para que un XSS pueda leerla con
-   `document.cookie` y exfiltrarla.
-   - Alternativa considerada: simular la visita del admin sin navegador real (p. ej. con `curl`).
-     Descartada porque no ejecuta JavaScript y el Stored XSS quedaría sin payoff real.
-   - Alternativa considerada: dejar que el participante inicie sesión como "admin" con una contraseña
-     crackeada de la tabla `users` del Reto 2. Descartada porque permitiría saltarse el Reto 1 (XSS) por
-     completo si el participante llega primero a la Base de Datos — el bot usa una credencial separada
-     (`BOT_SECRET`) que nunca aparece en la tabla `users`.
-7. **Persistencia de FLAG_DATABASE**: en vez de que la flag de puntuación del Reto 2 sea ella misma un
-   hash a crackear (inviable: un flag largo y aleatorio no es crackeable por diccionario), se guarda en
-   texto plano en una tabla adicional `system_notes`, poblada al arrancar el contenedor de base de datos
-   sustituyendo la variable de entorno `FLAG_DATABASE` en una plantilla SQL. El participante la obtiene
-   simplemente por haber alcanzado acceso de lectura a la base de datos con las credenciales filtradas.
-8. **Pendiente de decidir**:
-   - Contenido exacto de `docs/infra.jpg` (diagrama de red `macvlan`) — pendiente de que el propietario
-     del proyecto lo aporte o lo describa con más detalle. La topología `macvlan` no se ha aplicado
-     todavía al `docker-compose.yml` de desarrollo (que usa una red bridge estándar); es una tarea
-     explícita antes de dar el laboratorio por listo para el evento.
+**1. Alcance de servicios:** 3 retos (Web App, BD, Linux Server). Se descartó un cuarto "cPanel" en una versión anterior.
+
+**2. Stack de la Web Application:** PHP + MariaDB sin framework ni ORM. Las vulnerabilidades pedidas ocurren de forma idiomática en PHP plano. Un ORM parametrizado eliminaría la SQLi; un framework moderno neutralizaría XSS y LFI.
+
+**3. Algoritmo de hash en la Base de Datos:** MD5 sin salt. El ejemplo más reconocible de almacenamiento inseguro, crackeable en segundos con hashcat + rockyou, sin requerir hardware potente.
+
+**4. Manejo de flags y secretos de progresión:** fuera de git, vía variables de entorno. `.env.example` solo con nombres y valores ficticios. Las contraseñas MD5 "de ruido" de empleados son la única excepción (son la vulnerabilidad, no un secreto).
+
+**5. Mecanismo del JWT inseguro:** verificación de firma deshabilitada en el backend — `jwt_decode_unverified()` solo hace base64 del payload sin recalcular el HMAC. Elegido sobre `alg:none` porque no depende de que la librería cliente lo soporte, y es el error más común en implementaciones reales de JWT.
+
+**6. Servicio de soporte xss-bot:** cuarto contenedor Node.js + Playwright (Chromium headless) que simula al admin revisando tickets. Se autentica con `BOT_SECRET` vía un endpoint interno (`/bot_login.php`), no con contraseña de usuario, para que crackear hashes en el Reto 2 no permita saltarse el XSS. La flag `FLAG_WEBAPP_XSS` va embebida en el JWT de la cookie del bot (claim `flag`), sin `HttpOnly`, para que un XSS la exfiltre con `document.cookie`.
+
+**7. Persistencia de FLAG_DATABASE:** la flag se almacena en texto plano en la tabla `system_notes`, inyectada en runtime via `envsubst` en la plantilla SQL. Alternativa descartada: que la flag sea la password cifrada del admin descifrable con las 3 passwords de empleados combinadas — demasiado frágil (depende del orden exacto de filas) y desacoplado del resto de la cadena.
+
+**8. Cola del xss-bot:** tabla `bot_visit_queue` en MariaDB, gestionada vía endpoints `/bot/queue.php` y `/bot/mark_visited.php` protegidos por `BOT_SECRET`. Cualquier comentario nuevo en un ticket encola una visita del bot. Alternativa considerada: Redis — descartada para simplificar la infraestructura. Puede revisarse si el evento multi-equipo requiere mayor throughput.
+
+**9. Mecánica del Reto 3.6 ("matar proceso flag"):** se eligió la **Opción A** — proceso `/usr/local/bin/flag` corriendo como `nobody` con `FLAG_LINUXSERVER_PROC` como argumento de línea de comandos, visible en `ps aux` y `/proc/<PID>/cmdline` desde cualquier nivel de privilegio (incluso `msilva`). Es un reto paralelo, no un escalón. Alternativas descartadas: proceso que bloquea un archivo (Opción B, frágil con advisory locks en Docker) y proceso cuya muerte dispara un watchdog (Opción C, dependiente de timing).
+
+**10. Meta-reto "Objetivo Final":** 4 archivos `objetivo_final.txt` distribuidos en retos de los 3 servicios. Cada archivo contiene una palabra; en orden de descubrimiento forman "trabaja duro con pasion". Retos elegidos: 1.4 (LFI), 1.5 (JWT bypass), 3.2 (cron→jrodriguez), 3.5 (root). La palabra del Reto 1.5 va embebida en el JSON del endpoint interno (campo `objetivo_final`), no en un archivo de disco, para que sea coherente con la naturaleza de ese reto. Los archivos en el Linux Server tienen permisos restrictivos que refuerzan el requisito de escalada: 640 para jrodriguez y 600 para root.
+
+**11. Pendientes de decidir:**
+- Contenido exacto de `SABANA_KEY_B` (Fragmento B en `/root/secrets.txt` para el reto del Parqueadero N4) — pendiente de que el equipo del Parqueadero lo defina.
+- Topología de red final: cuándo y cómo migrar de bridge a `macvlan` e integración con WireGuard/nftables.
+- Templating por equipo: `docker compose -p teamN` con `.env` generados por script, o scripts que reescriben archivos.

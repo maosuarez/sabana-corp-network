@@ -23,7 +23,20 @@ EOF
 chown root:root /root/secrets.txt
 chmod 600 /root/secrets.txt
 
+# Reto 3.5 — palabra del objetivo_final, solo accesible como root.
+printf 'pasion\n' > /root/objetivo_final.txt
+chmod 600 /root/objetivo_final.txt
+
 # Arranca el demonio de cron en segundo plano (necesario para la vulnerabilidad del nivel 1→2).
 /usr/sbin/cron
+
+# Reto 3.6: inicia el proceso 'flag' como nobody con la flag como argumento.
+# VULN: la flag queda expuesta en la tabla de procesos y en /proc/<PID>/cmdline.
+# El participante la descubre sin necesidad de escalar privilegios:
+#   ps aux | grep flag
+#   cat /proc/<PID>/cmdline | tr '\0' '\n'
+# Para "completar" el reto: kill <PID>  (o pkill -f flag)
+FLAG_PROC_ARG="${FLAG_LINUXSERVER_PROC:-SABANA{flag_no_configurada}}"
+su -s /bin/bash nobody -c "/usr/local/bin/flag '$FLAG_PROC_ARG'" &
 
 exec "$@"

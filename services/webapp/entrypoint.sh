@@ -10,4 +10,9 @@ echo "${FLAG_WEBAPP_LFI:-SABANA{flag_no_configurada}}" > /var/www/flag_lfi.txt
 chown www-data:www-data /var/www/flag_lfi.txt
 chmod 640 /var/www/flag_lfi.txt
 
+# Reto 1.4 — palabra del objetivo_final, alcanzable via la misma LFI (?file=../../objetivo_final.txt)
+echo "trabaja" > /var/www/objetivo_final.txt
+chown www-data:www-data /var/www/objetivo_final.txt
+chmod 640 /var/www/objetivo_final.txt
+
 exec "$@"

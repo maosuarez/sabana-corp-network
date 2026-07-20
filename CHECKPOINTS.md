@@ -18,14 +18,14 @@ Este archivo debe usarse en cada sesión de trabajo sobre el repositorio `maosua
 
 ## Estado global del repositorio
 
-**Última actualización:** 2026-07-18 — Sesión 2 (linux-server + xss-bot + gaps webapp)
+**Última actualización:** 2026-07-19 — Sesión 4 (meta-reto objetivo_final + documentación completa)
 
 | Componente | Estado | % Completado |
 |---|---|---|
 | Documentación base | ✅ Completo | 100% |
 | Web-App (Reto 1) | 🟡 En progreso | ~90% (faltan tests end-to-end y /admin/dashboard opcional) |
 | Base de Datos (Reto 2) | 🟡 En progreso | ~90% (falta verificación end-to-end) |
-| Linux Server (Reto 3) | 🟡 En progreso | ~85% (falta Reto 3.6 y verificación) |
+| Linux Server (Reto 3) | 🟡 En progreso | ~90% (falta verificación end-to-end) |
 | XSS Admin Bot (soporte) | 🟡 En progreso | ~80% (falta rate-limit y verificación) |
 | Orquestación local | 🟡 Casi completo | 95% (falta solo verificar `up --build` limpio) |
 | Diagrama de red | ❌ Pendiente | 0% |
@@ -289,17 +289,23 @@ Vulnerabilidad: `lcastillo` tiene `sudo NOPASSWD` para `/usr/bin/python3`.
 - [x] 🔴 Contiene placeholder del "keyfile" / Fragmento B para el reto Parqueadero (N4) — valor pendiente de definir
 - [ ] Verificado end-to-end: root puede leer el archivo, la flag valida en CTFd
 
-#### Reto 3.6 — "Buscar procesos y eliminar el que se llama flag" ⚠️ PENDIENTE
+#### Reto 3.6 — Proceso `flag` con credencial expuesta en argumentos
 
-⚠️ **Requiere clarificación:** el diagrama menciona "buscar los procesos y eliminan el que se llama flag" pero no está claro si es:
+**Mecánica elegida (opción A):** `/usr/local/bin/flag` corre en background como `nobody` con `FLAG_LINUXSERVER_PROC` como argumento. La flag queda visible en `ps aux` y en `/proc/<pid>/cmdline`. No se requiere escalar privilegios para encontrarla — es accesible desde el nivel de `msilva`.
 
-- (a) Un proceso llamado `flag` cuyo pid/memoria contiene información útil (`/proc/<pid>/mem` lectura).
-- (b) Un proceso `flag` que bloquea un archivo, y al matarlo se libera el archivo.
-- (c) Un proceso `flag` que hay que matar para que aparezca `/root/secrets.txt`.
+Técnica de resolución:
+```bash
+ps aux | grep flag                          # ve la flag en la columna de argumentos
+cat /proc/<PID>/cmdline | tr '\0' '\n'      # alternativa via /proc
+kill <PID>                                  # "eliminación" del proceso
+```
 
-- [ ] 🔴 Decidir la mecánica exacta y documentar en `docs/context.md`
-- [ ] 🔴 Implementar según decisión
-- [ ] 🔴 Marcar con `# VULN:` la configuración correspondiente
+- [x] 🔴 Decidir la mecánica — **Opción A: flag en argumentos del proceso**
+- [x] 🔴 Script `/usr/local/bin/flag` creado en Dockerfile con loop infinito (`sleep 3600`)
+- [x] 🔴 Proceso iniciado en `entrypoint.sh` como `nobody` con `FLAG_LINUXSERVER_PROC` como argumento
+- [x] 🔴 Comentario `# VULN:` en Dockerfile y entrypoint sobre la exposición en argumentos
+- [x] 🔴 `FLAG_LINUXSERVER_PROC` añadida a `docker-compose.yml` y `.env.example`
+- [ ] Verificado: `ps aux | grep flag` desde `msilva` muestra la flag
 
 ### Configuración base de Linux-Srv
 
@@ -460,3 +466,5 @@ Vulnerabilidad: `lcastillo` tiene `sudo NOPASSWD` para `/usr/bin/python3`.
 | Fecha | Sesión | Cambios | Checkpoints tocados |
 |---|---|---|---|
 | 2026-07-18 | 2 | `search.php`: muestra `mysqli_error()`. `ticket.php`: encola jobs en `bot_visit_queue`. `database/init`: añade tabla `bot_visit_queue`. `webapp/src/bot/`: endpoints `queue.php` y `mark_visited.php`. `services/linux-server/`: Dockerfile + entrypoint completos (msilva→jrodriguez via cron, →lcastillo via SUID find, →root via sudo python3). `services/xss-bot/`: Dockerfile + bot.js (Playwright). `docker-compose.yml`: añade linux-server y xss-bot. CI matrix: añade linux-server y xss-bot. | 1, 2, 3, 4, 5 |
+| 2026-07-19 | 3 | Reto 3.6 implementado (Opción A): script `/usr/local/bin/flag` + arranque como `nobody` con `FLAG_LINUXSERVER_PROC` como argumento. Añadida variable a `docker-compose.yml` y `.env.example`. | 3 |
+| 2026-07-19 | 4 | Meta-reto "Objetivo Final": `objetivo_final.txt` en retos 1.4 (LFI→"trabaja"), 1.5 (JWT campo JSON→"duro"), 3.2 (jrodriguez home→"con"), 3.5 (root→"pasion"). `README.md` reescrito con secciones de infraestructura, retos detallados y soluciones. `docs/context.md` actualizado con decisiones #8-#11. | 1, 2, 3 |

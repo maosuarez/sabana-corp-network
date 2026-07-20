@@ -44,6 +44,7 @@ services:
     environment:
       PIVOT_SSH_PASSWORD: ${PIVOT_SSH_PASSWORD}
       FLAG_LINUXSERVER_ROOT: ${FLAG_LINUXSERVER_ROOT}
+      FLAG_LINUXSERVER_PROC: ${FLAG_LINUXSERVER_PROC}
     # Puerto SSH expuesto para que el participante se conecte con la credencial crackeada en el Reto 2.
     ports:
       - "2222:22"

@@ -18,7 +18,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd -m -s /bin/bash msilva
 
 # usuario2 = jrodriguez: propietario del cron-job vulnerable (escalamiento nivel 1→2).
-RUN useradd -m -s /bin/bash jrodriguez
+RUN useradd -m -s /bin/bash jrodriguez \
+    && printf 'con\n' > /home/jrodriguez/objetivo_final.txt \
+    && chown jrodriguez:jrodriguez /home/jrodriguez/objetivo_final.txt \
+    && chmod 640 /home/jrodriguez/objetivo_final.txt
 
 # usuario3 = lcastillo: propietario del binario SUID (escalamiento nivel 2→3) y beneficiario del sudo.
 RUN useradd -m -s /bin/bash lcastillo
@@ -49,6 +52,15 @@ RUN cp /usr/bin/find /usr/local/bin/find \
 # VULN: sudo NOPASSWD para python3 (Reto 3, vulnerabilidad #4 — sudo + GTFOBins)
 RUN echo 'lcastillo ALL=(ALL) NOPASSWD: /usr/bin/python3' > /etc/sudoers.d/lcastillo \
     && chmod 440 /etc/sudoers.d/lcastillo
+
+# ── Proceso "flag" (Reto 3.6) ────────────────────────────────────────────────
+# Script en /usr/local/bin/flag que el entrypoint arranca como nobody con FLAG_LINUXSERVER_PROC
+# como argumento. Su valor queda expuesto en la lista de procesos y en /proc/<pid>/cmdline.
+# VULN: credencial interna expuesta en argumentos del proceso (Reto 3, vulnerabilidad #3.6).
+# Descubrimiento: ps aux | grep flag      Extracción: cat /proc/<PID>/cmdline | tr '\0' '\n'
+RUN printf '#!/bin/bash\n# Proceso de verificacion de integridad del sistema.\nwhile true; do sleep 3600; done\n' \
+        > /usr/local/bin/flag \
+    && chmod 755 /usr/local/bin/flag
 
 # ── SSH ───────────────────────────────────────────────────────────────────────
 RUN mkdir -p /var/run/sshd \

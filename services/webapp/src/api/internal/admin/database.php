@@ -22,9 +22,11 @@ if (!$user || !in_array($user['role'] ?? '', ['it', 'admin'], true)) {
 // Filtra las credenciales reales que la propia Web App usa para conectarse a MariaDB (ver db.php /
 // config.php). Son las mismas credenciales con las que el participante se conecta directamente a la
 // Base de Datos en el Reto 2 (docker-compose.yml publica el puerto 3306).
+// Reto 1.5 — palabra del objetivo_final, solo visible tras bypassear el JWT.
 echo json_encode([
-    'db_host' => DB_HOST,
-    'db_name' => DB_NAME,
-    'db_user' => DB_APP_USER,
-    'db_password' => DB_APP_PASSWORD,
+    'db_host'        => DB_HOST,
+    'db_name'        => DB_NAME,
+    'db_user'        => DB_APP_USER,
+    'db_password'    => DB_APP_PASSWORD,
+    'objetivo_final' => 'duro',
 ]);
