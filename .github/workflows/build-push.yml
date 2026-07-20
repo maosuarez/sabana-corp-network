@@ -4,9 +4,8 @@ name: Build and publish lab images
 # en un solo reto no obligue a reconstruir los demás. Se activa solo si cambian archivos del servicio
 # correspondiente (o el propio workflow).
 #
-# NOTA: la matrix incluye por ahora solo los servicios que existen en el repositorio (webapp,
-# database). Añadir "linux-server" y "xss-bot" a la matrix cuando sus Dockerfiles se implementen (ver
-# docs/context.md, decisiones de diseño pendientes).
+# Matrix cubre los 4 servicios con Dockerfile propio. Cada cambio en un servicio solo dispara
+# la reconstrucción de esa imagen gracias al filtro de paths configurado más abajo.
 
 on:
   push:
@@ -21,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [webapp, database]
+        service: [webapp, database, linux-server, xss-bot]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

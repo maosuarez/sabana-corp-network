@@ -31,7 +31,7 @@ require __DIR__ . '/includes/header.php';
     </form>
 
     <?php if (!$result): ?>
-        <p class="error">Error en la consulta de búsqueda.</p>
+        <p class="error">Error en la consulta: <?= mysqli_error($conn) ?></p>
     <?php endif; ?>
 
     <table>

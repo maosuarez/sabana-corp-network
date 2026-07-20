@@ -39,10 +39,28 @@ services:
     networks:
       - sabana-lab
 
-  # Pendientes de construir (ver CLAUDE.md / docs/context.md):
-  #   - linux-server: reto 3, se añade cuando exista services/linux-server/Dockerfile.
-  #   - xss-bot: servicio de soporte (no es un reto) que dispara el Stored XSS del reto 1
-  #     autenticándose vía bot_login.php con BOT_SECRET; se añade cuando exista services/xss-bot.
+  linux-server:
+    build: ./services/linux-server
+    environment:
+      PIVOT_SSH_PASSWORD: ${PIVOT_SSH_PASSWORD}
+      FLAG_LINUXSERVER_ROOT: ${FLAG_LINUXSERVER_ROOT}
+    # Puerto SSH expuesto para que el participante se conecte con la credencial crackeada en el Reto 2.
+    ports:
+      - "2222:22"
+    networks:
+      - sabana-lab
+
+  xss-bot:
+    build: ./services/xss-bot
+    environment:
+      WEBAPP_BASE_URL: ${WEBAPP_BASE_URL:-http://webapp:80}
+      BOT_SECRET: ${BOT_SECRET}
+      BOT_VISIT_INTERVAL_SECONDS: ${BOT_VISIT_INTERVAL_SECONDS:-30}
+    depends_on:
+      webapp:
+        condition: service_started
+    networks:
+      - sabana-lab
 
 networks:
   sabana-lab:

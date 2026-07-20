@@ -17,6 +17,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['comment'])) {
     $stmt->bind_param('iss', $id, $user['username'], $body);
     $stmt->execute();
 
+    // Encola el ticket para revisión del bot de administración (services/xss-bot).
+    // El bot visita la URL del ticket, ejecutando cualquier payload JS almacenado en comentarios.
+    $qstmt = $conn->prepare('INSERT INTO bot_visit_queue (ticket_id) VALUES (?)');
+    $qstmt->bind_param('i', $id);
+    $qstmt->execute();
+
     header('Location: /ticket?id=' . $id);
     exit;
 }

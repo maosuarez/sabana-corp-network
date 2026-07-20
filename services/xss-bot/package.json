@@ -1,0 +1,9 @@
+{
+  "name": "xss-bot",
+  "version": "1.0.0",
+  "description": "Bot de administración que visita tickets del helpdesk con Playwright (soporte del Reto 1, Stored XSS)",
+  "main": "bot.js",
+  "dependencies": {
+    "playwright": "1.44.1"
+  }
+}

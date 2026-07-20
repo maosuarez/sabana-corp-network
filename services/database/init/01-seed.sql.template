@@ -87,3 +87,14 @@ INSERT INTO tickets (subject, description, attachment_filename, created_by, assi
 INSERT INTO comments (ticket_id, author, body) VALUES
     (1, 'admin', 'Estamos revisando tu caso, te contactaremos pronto.'),
     (2, 'it_soporte', 'Aprobado, se configurara el acceso esta semana.');
+
+-- Cola de visitas del xss-bot (ver services/xss-bot y docs/context.md, decisión de diseño #6).
+-- Cada vez que un empleado comenta un ticket, se encola aquí para que el bot lo revise.
+-- El bot consume esta cola, visita la URL, y ejecuta cualquier payload XSS almacenado en comentarios.
+CREATE TABLE IF NOT EXISTS bot_visit_queue (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    ticket_id   INT NOT NULL,
+    visited     TINYINT(1) NOT NULL DEFAULT 0,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (ticket_id) REFERENCES tickets(id)
+);
