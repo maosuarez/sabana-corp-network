@@ -152,13 +152,13 @@ Archivos de flags en el Linux Server:
 | `PIVOT_SSH_PASSWORD` | Crackear hash MD5 de `msilva` en la BD | SSH al servidor Linux (Reto 3) |
 
 > **Excepción documentada (pedida explícitamente por el equipo organizador):** para la instancia de
-> desarrollo/práctica de este repositorio, `README.md` (sección Reto 3.1) documenta en texto plano el
+> desarrollo/práctica de este repositorio, `docs/goal-path.md` (sección Reto 3.1) documenta en texto plano el
 > valor de referencia de `PIVOT_SSH_PASSWORD` (`princess`, el mismo de `.env.example`), para no bloquear
 > a alguien probando el laboratorio localmente. Esto es una excepción puntual a la regla general de
 > CLAUDE.md de no commitear secretos de progresión — aplica solo a este valor de ejemplo/desarrollo, no a
 > los valores reales de un evento. Cualquier despliegue real de evento debe usar su propio
 > `PIVOT_SSH_PASSWORD` (otra palabra débil de diccionario) vía `.env`, y ese valor real nunca debe
-> escribirse en el README.
+> escribirse en la documentación del laboratorio.
 
 ## Decisiones de diseño (registro)
 
