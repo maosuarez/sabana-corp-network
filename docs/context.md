@@ -67,7 +67,7 @@ Sistema de tickets con tres perfiles: **Visitante** (sin sesión), **Empleado** 
 | 1.1 | Credenciales expuestas | Comentario HTML en view-source de `/login` | Sesión como `jperez` (empleado) |
 | 1.2 | SQL Injection | Concatenación directa en `mysqli_query()` en `/search` | ID del usuario `it_soporte` (id=3) |
 | 1.3 | IDOR | `/profile?id=3` sin validar ownership | Ruta del endpoint interno revelada en el 403 |
-| 1.4 | LFI / path traversal | `readfile()` sin sanitizar en `/attachment` | `FLAG_WEBAPP_LFI` + palabra "trabaja" del meta-reto |
+| 1.4 | LFI / path traversal | `readfile()` sin sanitizar en `/attachment`, con oráculo de listado de directorios cuando `file` apunta a una carpeta | `FLAG_WEBAPP_LFI` + palabra "trabaja" del meta-reto |
 | 1.5 | JWT inseguro | Payload decodificado sin verificar HMAC en `/api/internal/admin/database` | Credenciales de la BD + palabra "duro" del meta-reto |
 | 1.6 | Stored XSS | `echo $body` sin `htmlspecialchars()` en comentarios de tickets | `FLAG_WEBAPP_XSS` (en claim `flag` del JWT del bot) |
 
@@ -79,9 +79,20 @@ La vulnerabilidad **1.4** (LFI) y **1.6** (XSS) son flags de puntuación adicion
 
 MariaDB accesible directamente en el puerto 3306 con las credenciales obtenidas en 1.5. Contiene las contraseñas de los empleados almacenadas como MD5 sin salt.
 
-- **`users`**: tabla con `password_md5`. Hashes crackeables con hashcat + rockyou en segundos.
+- **`users`**: tabla con `password_md5`. 5 de los 6 hashes son crackeables con hashcat + rockyou en segundos
+  (`admin`→`qwerty`, `it_soporte`→`monkey`, `msilva`→`PIVOT_SSH_PASSWORD`, `rgomez`→`Password1`,
+  `lcastro`→`iloveyou`; ver `services/database/init/01-seed.sql.template`). `jperez` es la única excepción
+  deliberada: su hash es `MD5('Bienvenido123')`, la misma credencial que ya se entrega directamente en el
+  Reto 1.1 vía comentario HTML — no depende de hashcat y cambiarla rompería el login de ese paso.
 - **`system_notes`**: tabla que contiene `FLAG_DATABASE` en texto claro (inyectada en runtime desde `FLAG_DATABASE`).
+- **`tickets`**: incluye un ticket sembrado ("Actualizacion de password del servidor Linux", ver
+  `services/database/init/01-seed.sql.template`) que menciona en la ficción que `msilva` reutiliza la
+  misma contraseña en el helpdesk y en el servidor Linux — una pista narrativa sutil hacia la progresión
+  de abajo, sin revelar el valor.
 - **Progresión**: la contraseña de `msilva` crackeada = `PIVOT_SSH_PASSWORD` = credencial SSH del Reto 3.
+  `PIVOT_SSH_PASSWORD` debe ser, por diseño, una palabra de diccionario real (no un placeholder tipo
+  `changeme_...`) para que el hash de `msilva` sea crackeable; `.env.example` usa `princess` como valor de
+  referencia para instancias de desarrollo/práctica de este repositorio.
 
 ### Reto 3 — Linux Server
 
@@ -140,6 +151,15 @@ Archivos de flags en el Linux Server:
 | `DB_APP_USER` + `DB_APP_PASSWORD` | JWT bypass del endpoint interno | Conectar a la BD (Reto 2) |
 | `PIVOT_SSH_PASSWORD` | Crackear hash MD5 de `msilva` en la BD | SSH al servidor Linux (Reto 3) |
 
+> **Excepción documentada (pedida explícitamente por el equipo organizador):** para la instancia de
+> desarrollo/práctica de este repositorio, `README.md` (sección Reto 3.1) documenta en texto plano el
+> valor de referencia de `PIVOT_SSH_PASSWORD` (`princess`, el mismo de `.env.example`), para no bloquear
+> a alguien probando el laboratorio localmente. Esto es una excepción puntual a la regla general de
+> CLAUDE.md de no commitear secretos de progresión — aplica solo a este valor de ejemplo/desarrollo, no a
+> los valores reales de un evento. Cualquier despliegue real de evento debe usar su propio
+> `PIVOT_SSH_PASSWORD` (otra palabra débil de diccionario) vía `.env`, y ese valor real nunca debe
+> escribirse en el README.
+
 ## Decisiones de diseño (registro)
 
 Esta sección acumula decisiones arquitectónicas no triviales con alternativas consideradas.
@@ -164,7 +184,41 @@ Esta sección acumula decisiones arquitectónicas no triviales con alternativas 
 
 **10. Meta-reto "Objetivo Final":** 4 archivos `objetivo_final.txt` distribuidos en retos de los 3 servicios. Cada archivo contiene una palabra; en orden de descubrimiento forman "trabaja duro con pasion". Retos elegidos: 1.4 (LFI), 1.5 (JWT bypass), 3.2 (cron→jrodriguez), 3.5 (root). La palabra del Reto 1.5 va embebida en el JSON del endpoint interno (campo `objetivo_final`), no en un archivo de disco, para que sea coherente con la naturaleza de ese reto. Los archivos en el Linux Server tienen permisos restrictivos que refuerzan el requisito de escalada: 640 para jrodriguez y 600 para root.
 
-**11. Pendientes de decidir:**
+**12. Oráculo de listado de directorios en el LFI (Reto 1.4):** `attachment.php` original solo servía o
+fallaba archivos — sin conocer de antemano la ruta exacta de `flag_lfi.txt`, un participante en este nivel
+no tenía forma realista de descubrirla con path traversal a ciegas. Se añadió que si `file` resuelve a un
+directorio, el endpoint liste su contenido (carpetas, archivos, si existe `..`) en vez de fallar. Marcado
+con `VULN` en `attachment.php` — es una capacidad deliberada, no una función legítima de un servidor de
+adjuntos real. Alternativa descartada: dar la ruta completa como pista en el 403 de otro paso — se prefirió
+un oráculo explorable porque refuerza la mecánica de "navegar" el filesystem, más instructiva que una pista
+de texto.
+
+**13. Señuelo de `/etc/passwd` en `/var/www/etc/passwd` (Reto 1.4):** la base de adjuntos
+(`/var/www/html/uploads`) está solo dos niveles por debajo de `/var/www`, así que `file=../../etc/passwd`
+(la ruta que un participante prueba de forma intuitiva) no llega a la raíz real del filesystem — hacen
+falta cuatro `../` para eso. En vez de dejar esa ruta "intuitiva" en 404 (lo que sugeriría que el LFI no
+funciona), se coloca un `/etc/passwd` de aspecto realista en `/var/www/etc/passwd` (creado en runtime por
+`services/webapp/entrypoint.sh`). El `/etc/passwd` real del contenedor sigue siendo alcanzable con
+`file=../../../../etc/passwd`, sin cambios adicionales.
+
+**14. Avatar/enlace de perfil en el header (Reto 1.3):** tras iniciar sesión, el header
+(`services/webapp/src/includes/header.php`) muestra un enlace fijo a `/profile?id=2` (el id de `jperez`
+en el seed). No es en sí mismo vulnerable — la lógica insegura sigue viviendo exclusivamente en
+`profile.php` — pero hace visible el parámetro `?id=` como algo que existe y se puede tocar, en vez de que
+el participante dependa solo de adivinar el patrón del IDOR.
+
+**15. Pista adicional en el 403 de `/api/internal/admin/database` (Reto 1.5):** al mensaje de error se le
+agregó "Este enlace es sensible, por favor no lo compartas fuera del equipo de TI." — una migaja
+deliberada que confirma al participante que el endpoint es real/sensible (no un 403 genérico) y lo anima a
+insistir con el JWT manipulado. Marcado con `VULN` junto al resto del control de acceso inseguro de ese
+endpoint.
+
+**16. Pendientes de decidir:**
 - Contenido exacto de `SABANA_KEY_B` (Fragmento B en `/root/secrets.txt` para el reto del Parqueadero N4) — pendiente de que el equipo del Parqueadero lo defina.
 - Topología de red final: cuándo y cómo migrar de bridge a `macvlan` e integración con WireGuard/nftables.
+  Paso intermedio ya aplicado: la bridge `sabana-lab` usa una subred fija (`172.28.0.0/24`) con IP estática
+  por servicio (database `172.28.0.10`, webapp `172.28.0.20`, linux-server `172.28.0.30`, xss-bot
+  `172.28.0.40`). El DNS interno de Docker sigue resolviendo por nombre de servicio, así que las referencias
+  por nombre no cambian. La migración a `macvlan` reemplazará el driver y el `parent`, conservando el
+  esquema de direccionamiento por servicio.
 - Templating por equipo: `docker compose -p teamN` con `.env` generados por script, o scripts que reescriben archivos.

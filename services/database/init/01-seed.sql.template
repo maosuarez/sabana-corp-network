@@ -56,37 +56,52 @@ INSERT INTO system_notes (content) VALUES
 
 -- Usuarios semilla. Los passwords en texto plano de este comentario son intencionalmente débiles y
 -- forman parte del reto (ver CLAUDE.md — excepción documentada a "secretos fuera de git").
+--
+-- VULN: hashing MD5 sin salt + passwords de diccionario (Reto 2). Salvo jperez (ver abajo), cada password
+-- fue elegida deliberadamente porque aparece entre las más comunes de rockyou.txt, para que las 5
+-- restantes se crackeen con `hashcat -m 0` en segundos incluso con una wordlist básica/recortada.
 INSERT INTO users (username, password_md5, role, full_name, email) VALUES
-    -- admin: cuenta de administracion real de la app. Password fuerte, no forma parte de la cadena de
-    -- explotacion prevista (el reto de XSS usa una credencial de bot separada, ver services/xss-bot).
-    ('admin', MD5('C0rp4dm1n!SuperSecure#2024'), 'admin', 'Administrador Sabana Corp', 'admin@sabanacorp.lab'),
+    -- admin: cuenta de administracion real de la app. Reutiliza una password de diccionario a propósito
+    -- (no es un descuido): el reto de XSS usa una credencial de bot separada (ver services/xss-bot), así
+    -- que crackear esta no da ningún atajo — solo refuerza la lección de hashcat en el Reto 2.
+    ('admin', MD5('qwerty'), 'admin', 'Administrador Sabana Corp', 'admin@sabanacorp.lab'),
 
-    -- jperez: credencial de Empleado filtrada en el HTML/JS del login (Reto 1, vulnerabilidad #1).
+    -- jperez: credencial de Empleado filtrada en el HTML/JS del login (Reto 1, vulnerabilidad #1). Se
+    -- deja fuera de la lista "crackeable con rockyou" a propósito: el participante ya la obtiene
+    -- directamente vía el comentario HTML, sin necesidad de hashcat, y login.php valida contra este mismo
+    -- valor literal — cambiarlo rompería el Reto 1.1.
     ('jperez', MD5('Bienvenido123'), 'employee', 'Juan Perez', 'jperez@sabanacorp.lab'),
 
     -- it_soporte: usuario de TI cuyo ID se descubre via SQLi (Reto 1, vulnerabilidad #2) y cuyo perfil
     -- se accede via IDOR (Reto 1, vulnerabilidad #3).
-    ('it_soporte', MD5('SoporteIT2024!'), 'it', 'Soporte TI', 'it.soporte@sabanacorp.lab'),
+    ('it_soporte', MD5('monkey'), 'it', 'Soporte TI', 'it.soporte@sabanacorp.lab'),
 
     -- msilva: password reuse deliberado — su contraseña de la app es la MISMA que su contraseña SSH en
     -- el Linux Server del Reto 3 (PIVOT_SSH_PASSWORD). Este es el secreto de progresion que conecta el
-    -- Reto 2 con el Reto 3.
+    -- Reto 2 con el Reto 3. PIVOT_SSH_PASSWORD debe ser, por diseño, una password de diccionario
+    -- (ver .env.example) para que este hash también sea crackeable con rockyou.
     ('msilva', MD5('${PIVOT_SSH_PASSWORD}'), 'employee', 'Maria Silva', 'msilva@sabanacorp.lab'),
 
     -- Empleados de "ruido" adicionales, sin rol en la cadena de explotacion.
     ('rgomez', MD5('Password1'), 'employee', 'Ricardo Gomez', 'rgomez@sabanacorp.lab'),
-    ('lcastro', MD5('sabana2024'), 'employee', 'Laura Castro', 'lcastro@sabanacorp.lab');
+    ('lcastro', MD5('iloveyou'), 'employee', 'Laura Castro', 'lcastro@sabanacorp.lab');
 
 INSERT INTO tickets (subject, description, attachment_filename, created_by, assigned_to, status) VALUES
     ('No puedo acceder a mi correo', 'Desde ayer no puedo iniciar sesion en el correo corporativo.', NULL, 2, NULL, 'open'),
     ('Solicitud de acceso a VPN', 'Necesito acceso remoto para trabajar desde casa.', 'vpn_request.pdf', 2, 3, 'in_progress'),
     -- Ticket asignado a IT con informacion sensible — este es el que el participante encuentra via SQLi.
     ('Revisar credenciales de base de datos del helpdesk', 'Pendiente rotar el usuario de aplicacion tras la migracion. Contactar a it_soporte (id de usuario incluido en asignacion).', NULL, 1, 3, 'in_progress'),
-    ('Backup semanal del servidor', 'Confirmar que el cron de backup en el servidor Linux sigue corriendo.', 'backup_log.txt', 3, 3, 'closed');
+    ('Backup semanal del servidor', 'Confirmar que el cron de backup en el servidor Linux sigue corriendo.', 'backup_log.txt', 3, 3, 'closed'),
+    -- Pista narrativa sutil para el pivote Reto 2 -> Reto 3 (ver docs/context.md, Reto 2, "Progresión").
+    -- No revela la contraseña, pero confirma en la propia ficción que crackear el hash de msilva entrega
+    -- también su credencial SSH del Linux Server: exactamente el mecanismo de password reuse ya marcado
+    -- con VULN en services/linux-server/entrypoint.sh.
+    ('Actualizacion de password del servidor Linux', 'Se detecto que msilva esta usando en el servidor Linux la MISMA contrasena que tiene configurada en el sistema del helpdesk. Es un riesgo de seguridad por reutilizacion de credenciales: cualquiera que obtenga la contrasena de una cuenta obtiene tambien la otra. Se le pidio a msilva actualizar la contrasena del servidor Linux cuanto antes; ticket queda abierto hasta confirmar el cambio.', NULL, 3, 4, 'open');
 
 INSERT INTO comments (ticket_id, author, body) VALUES
     (1, 'admin', 'Estamos revisando tu caso, te contactaremos pronto.'),
-    (2, 'it_soporte', 'Aprobado, se configurara el acceso esta semana.');
+    (2, 'it_soporte', 'Aprobado, se configurara el acceso esta semana.'),
+    (5, 'it_soporte', 'msilva, por favor cambia la contrasena del servidor Linux en cuanto puedas — no debe coincidir con la del helpdesk.');
 
 -- Cola de visitas del xss-bot (ver services/xss-bot y docs/context.md, decisión de diseño #6).
 -- Cada vez que un empleado comenta un ticket, se encola aquí para que el bot lo revise.

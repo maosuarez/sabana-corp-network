@@ -13,8 +13,12 @@ if (!$user || !in_array($user['role'] ?? '', ['it', 'admin'], true)) {
     http_response_code(403);
     // La ruta real del endpoint se revela aquí a propósito (Reto 1, vulnerabilidad #4 —
     // descubrimiento de endpoint tras el IDOR en /profile).
+    // VULN: fuga de contexto en el mensaje 403 (Reto 1, vulnerabilidad #5b). La pista extra ("por favor
+    // no lo compartas") es una migaja deliberada: confirma que el endpoint es sensible/real y anima al
+    // participante a insistir en él (con el JWT manipulado) en vez de descartarlo como un 403 genérico.
     echo json_encode([
-        'error' => 'Acceso denegado a /api/internal/admin/database: se requiere rol it o admin.',
+        'error' => 'Acceso denegado a /api/internal/admin/database: se requiere rol it o admin. '
+            . 'Este enlace es sensible, por favor no lo compartas fuera del equipo de TI.',
     ]);
     exit;
 }

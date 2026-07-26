@@ -14,9 +14,13 @@ echo "lcastillo:LCas7ill0_lab_2024!"  | chpasswd
 # Escribe el archivo de secretos de root.
 # FLAG_LINUXSERVER_ROOT es la flag de puntuación del Reto 3.
 # El Fragmento B es el keyfile para el reto del Parqueadero (N4) — pendiente de definir su valor final.
+# Nota: el default se arma en una variable aparte (no inline en ${VAR:-...}) porque una llave "{" sin
+# escapar dentro del propio default de un ${VAR:-default} descuadra el parseo de bash y duplica la "}"
+# final en la salida — bug real de bash, no relacionado con las vulnerabilidades del reto.
+_default_flag_root='SABANA{flag_no_configurada}'
 mkdir -p /root
 cat > /root/secrets.txt << EOF
-${FLAG_LINUXSERVER_ROOT:-SABANA{flag_no_configurada}}
+${FLAG_LINUXSERVER_ROOT:-$_default_flag_root}
 --- Keyfile Fragmento B (para reto Parqueadero N4) ---
 SABANA_KEY_B=PENDIENTE_DE_CONFIGURAR
 EOF
@@ -36,7 +40,8 @@ chmod 600 /root/objetivo_final.txt
 #   ps aux | grep flag
 #   cat /proc/<PID>/cmdline | tr '\0' '\n'
 # Para "completar" el reto: kill <PID>  (o pkill -f flag)
-FLAG_PROC_ARG="${FLAG_LINUXSERVER_PROC:-SABANA{flag_no_configurada}}"
+_default_flag_proc='SABANA{flag_no_configurada}'
+FLAG_PROC_ARG="${FLAG_LINUXSERVER_PROC:-$_default_flag_proc}"
 su -s /bin/bash nobody -c "/usr/local/bin/flag '$FLAG_PROC_ARG'" &
 
 exec "$@"

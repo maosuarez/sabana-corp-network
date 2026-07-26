@@ -189,7 +189,7 @@ Vulnerabilidad: XSS almacenado en comentarios de tickets. Cookie de admin sin `H
 - [x] 🔴 Usuarios: `jperez` (employee), `it_soporte` (it), `msilva` (employee), `rgomez` (employee), `lcastro` (employee) con MD5 sin salt
 - [x] 🔴 1 usuario IT (`it_soporte`) con rol elevado
 - [x] 🔴 1 usuario `admin` con password fuerte (no forma parte de la cadena de explotación)
-- [x] 🔴 Passwords crackeables con `hashcat` + `rockyou.txt` en < 5 minutos — `Bienvenido123`, `Password1`, `sabana2024`
+- [x] 🔴 Passwords crackeables con `hashcat` + `rockyou.txt` en < 5 minutos — `qwerty` (admin), `monkey` (it_soporte), `Password1` (rgomez), `iloveyou` (lcastro), y `PIVOT_SSH_PASSWORD` (msilva, ej. `princess`). `jperez` (`Bienvenido123`) queda fuera a propósito: ya se entrega directamente en el Reto 1.1.
 - [x] 🔴 `msilva` usa `PIVOT_SSH_PASSWORD` — su hash MD5 es la llave del pivote al Reto 3
 - [x] 🔴 Seed data en `init/01-seed.sql.template` versionado, sustituido en runtime por `entrypoint-wrapper.sh`
 - [ ] Verificado: dump de tabla users es viable, hashes se crackean

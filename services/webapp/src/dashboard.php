@@ -11,10 +11,16 @@ $stmt->bind_param('ii', $user['sub'], $user['sub']);
 $stmt->execute();
 $tickets = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 
+// Conteo de TODOS los tickets del sistema (no solo los del usuario). Pista deliberada: si el conteo
+// total no coincide con la cantidad de filas listadas abajo, invita al participante a intentar acceder
+// a otros IDs de ticket directamente vía /ticket?id=N (mismo patrón que la pista del avatar → IDOR de
+// /profile?id=). No expone contenido, solo la cantidad.
+$total_tickets = (int) get_db()->query('SELECT COUNT(*) AS n FROM tickets')->fetch_assoc()['n'];
+
 require __DIR__ . '/includes/header.php';
 ?>
 <div class="card">
-    <h1>Mis tickets</h1>
+    <h1>Mis tickets <span class="ticket-count">(<?= count($tickets) ?> de <?= $total_tickets ?>)</span></h1>
     <form method="get" action="/search" class="search-form">
         <input type="text" name="q" placeholder="Buscar tickets...">
         <button type="submit">Buscar</button>

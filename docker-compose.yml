@@ -18,7 +18,8 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - sabana-lab
+      sabana-lab:
+        ipv4_address: 172.28.0.10
 
   webapp:
     build: ./services/webapp
@@ -37,7 +38,8 @@ services:
     ports:
       - "8080:80"
     networks:
-      - sabana-lab
+      sabana-lab:
+        ipv4_address: 172.28.0.20
 
   linux-server:
     build: ./services/linux-server
@@ -49,7 +51,8 @@ services:
     ports:
       - "2222:22"
     networks:
-      - sabana-lab
+      sabana-lab:
+        ipv4_address: 172.28.0.30
 
   xss-bot:
     build: ./services/xss-bot
@@ -61,11 +64,23 @@ services:
       webapp:
         condition: service_started
     networks:
-      - sabana-lab
+      sabana-lab:
+        ipv4_address: 172.28.0.40
 
 networks:
   sabana-lab:
     driver: bridge
-    # La topología final del laboratorio usa macvlan para IP propia por contenedor en la red física del
-    # evento (ver docs/context.md, decisión de diseño #8, pendiente de docs/infra.jpg). Bridge estándar
-    # es suficiente y más simple para desarrollo local.
+    # IP fija por contenedor sobre bridge personalizada: cada servicio tiene una IP estable en la subred
+    # del laboratorio (database .10, webapp .20, linux-server .30, xss-bot .40). El DNS interno de Docker
+    # sigue resolviendo por nombre de servicio, así que las referencias por nombre (DB_HOST=database,
+    # WEBAPP_BASE_URL=http://webapp:80) siguen funcionando; las IPs son un extra para escenarios donde el
+    # participante trata cada servicio como un host distinto.
+    #
+    # La topología final del evento usará macvlan para dar a cada contenedor una IP propia en la red física
+    # del edificio (ver docs/context.md, decisión de diseño #11, pendiente de docs/infra.jpg). macvlan
+    # requiere una interfaz `parent` del host y config específica de la máquina, por eso no se usa en
+    # desarrollo local — esta bridge con IPs fijas es el paso intermedio reproducible.
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+          gateway: 172.28.0.1
