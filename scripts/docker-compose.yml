@@ -1,0 +1,87 @@
+# Sabana Corp Network — Lab CTF
+#
+# Docker Compose de SOLO DESPLIEGUE: no construye nada, descarga las imagenes ya
+# publicadas en Docker Hub (ver .github/workflows/build-push.yml del repo) y las
+# levanta con datos de prueba. Pensado para compartir con quien va a probar el
+# laboratorio SIN darle el repositorio completo.
+#
+# Uso:
+#   docker compose -f docker-compose.yml up -d
+#   docker compose -f docker-compose.yml down -v   # reset completo (borra la BD)
+#
+# Todas las flags y credenciales de abajo son de un entorno de PRUEBAS, no de
+# produccion. No pasa nada si quien lo recibe las ve.
+
+services:
+  database:
+    image: maosuarez/sabana-lab-database:latest
+    environment:
+      MYSQL_ROOT_PASSWORD: test_root_password
+      MYSQL_DATABASE: sabana_helpdesk
+      DB_APP_USER: helpdesk_app
+      DB_APP_PASSWORD: test_db_app_password
+      FLAG_DATABASE: SABANA{test_flag_database}
+      PIVOT_SSH_PASSWORD: princess
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      sabana-lab:
+        ipv4_address: 172.28.0.10
+
+  webapp:
+    image: maosuarez/sabana-lab-webapp:latest
+    environment:
+      DB_HOST: database
+      DB_NAME: sabana_helpdesk
+      DB_APP_USER: helpdesk_app
+      DB_APP_PASSWORD: test_db_app_password
+      JWT_SIGNING_SECRET: test_jwt_signing_secret
+      BOT_SECRET: test_bot_secret
+      FLAG_WEBAPP_XSS: SABANA{test_flag_webapp_xss}
+      FLAG_WEBAPP_LFI: SABANA{test_flag_webapp_lfi}
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    networks:
+      sabana-lab:
+        ipv4_address: 172.28.0.20
+
+  linux-server:
+    image: maosuarez/sabana-lab-linux-server:latest
+    environment:
+      PIVOT_SSH_PASSWORD: princess
+      FLAG_LINUXSERVER_ROOT: SABANA{test_flag_linuxserver_root}
+      FLAG_LINUXSERVER_PROC: SABANA{test_flag_linuxserver_proc}
+    ports:
+      - "2222:22"
+    networks:
+      sabana-lab:
+        ipv4_address: 172.28.0.30
+
+  xss-bot:
+    image: maosuarez/sabana-lab-xss-bot:latest
+    environment:
+      WEBAPP_BASE_URL: http://webapp:80
+      BOT_SECRET: test_bot_secret
+      BOT_VISIT_INTERVAL_SECONDS: 30
+    depends_on:
+      webapp:
+        condition: service_started
+    networks:
+      sabana-lab:
+        ipv4_address: 172.28.0.40
+
+networks:
+  sabana-lab:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+          gateway: 172.28.0.1
